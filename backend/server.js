@@ -150,22 +150,77 @@ app.get('/api/sales', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Payer une partie (autorise le surplus)
+// Payer une partie (autorise le surplus AVEC compensation automatique)
 app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try{
     const { amount } = req.body;
-    const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid });
-    if(!sale) return res.status(404).json({ error:'Vente introuvable' });
-    const inc = Math.max(0, Number(amount||0));
+    const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid }).session(session);
+    if(!sale) { await session.abortTransaction(); return res.status(404).json({ error:'Vente introuvable' }); }
     
-    // MODIFIÉ : Ajouter le montant directement (le modèle gère le crédit)
-    sale.payment += inc;
+    let paymentAmount = Math.max(0, Number(amount||0));
     
-    await sale.validate();
-    await sale.save();
+    if (paymentAmount > 0) {
+      
+      // 1. Appliquer le paiement à la vente actuelle
+      sale.payment += paymentAmount;
+      await sale.validate();
+      await sale.save({ session }); // Enregistrement dans la transaction
+      
+      // Calculer l'excédent (crédit) généré par ce paiement sur cette vente
+      let surplus = Math.max(0, sale.payment - sale.amount);
+      
+      // 2. Si un surplus existe, chercher les autres dettes du même client
+      if (surplus > 0) {
+        
+        // Trouver toutes les AUTRES ventes non soldées du MÊME client (balance > 0)
+        const clientDebts = await Sale.find({ 
+          owner: req.user.uid,
+          clientName: sale.clientName,
+          _id: { $ne: sale._id }, // Exclure la vente actuelle
+          balance: { $gt: 0 } 
+        }).sort({ date: 1, createdAt: 1 }).session(session); // Compenser de la plus ancienne à la plus récente
+        
+        for (const debtSale of clientDebts) {
+          if (surplus <= 0) break; // Arrêter si le surplus est épuisé
+          
+          const due = debtSale.balance; // Solde dû sur cette autre facture
+          const compensation = Math.min(surplus, due); // Compenser au maximum le dû ou le surplus restant
+          
+          // Appliquer la compensation à la dette : augmenter le paiement
+          debtSale.payment += compensation;
+          await debtSale.validate();
+          await debtSale.save({ session }); // Enregistrement dans la transaction
+          
+          // Diminuer le surplus restant
+          surplus -= compensation;
+        }
+        
+        // 3. Ajustement de la vente initiale si une partie du crédit a été utilisée
+        // L'excédent réel laissé sur la vente initiale est 'surplus'
+        const initialCredit = sale.payment - sale.amount;
+        const compensatedAmount = initialCredit - surplus;
+
+        if (compensatedAmount > 0) {
+            sale.payment -= compensatedAmount;
+            await sale.validate(); // Recalculer le solde de la vente initiale
+            await sale.save({ session }); // Enregistrement dans la transaction
+        }
+      }
+    }
+    
+    await session.commitTransaction();
+    // Renvoyer l'état final de la vente initiale
     res.json(sale);
-  }catch(e){ res.status(400).json({ error:e.message }); }
+  }catch(e){ 
+    await session.abortTransaction();
+    res.status(400).json({ error:e.message }); 
+  }finally {
+    session.endSession();
+  }
 });
+
 
 // Rembourser une partie du crédit client
 app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
@@ -231,20 +286,87 @@ app.get('/api/dashboard/debts', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// NOUVELLE ROUTE : Dashboard crédits clients (entreprise doit au client, balance < 0)
+// Dashboard crédits clients (entreprise doit au client, balance < 0)
 app.get('/api/dashboard/credits', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
       { $match: { owner: new mongoose.Types.ObjectId(req.user.uid), balance: { $lt: 0 } } },
-      // Grouper et calculer le crédit total (somme des balances négatives)
       { $group: { _id:"$clientName", totalCredit:{ $sum:"$balance" }, count:{ $sum:1 } } },
-      // Utiliser $abs pour afficher un montant positif représentant le crédit
       { $project: { clientName:"$_id", totalCredit:{ $abs:"$totalCredit" }, count:1, _id:0 } }, 
       { $sort: { totalCredit:-1 } }
     ]);
     res.json(agg);
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
+
+// NOUVELLE ROUTE : Liste de tous les clients pour le bilan
+app.get('/api/clients', auth, async (req, res) => {
+  try {
+    const clients = await Sale.distinct('clientName', { owner: req.user.uid });
+    res.json(clients.sort());
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// NOUVELLE ROUTE : Export Excel du bilan client (ou de tous)
+app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
+  try {
+    const { clientName } = req.query;
+    const q = { owner: req.user.uid };
+    
+    if (clientName && clientName !== 'all') {
+        q.clientName = clientName;
+    }
+
+    const sales = await Sale.find(q).sort({ clientName: 1, date: -1, createdAt: -1 });
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(clientName && clientName !== 'all' ? `Bilan_${clientName}` : 'Bilan_Global');
+
+    ws.columns = [
+      { header: 'Client', key: 'clientName', width: 25 },
+      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Poisson', key: 'fishType', width: 12 },
+      { header: 'Quantité (Kg)', key: 'quantity', width: 15 },
+      { header: 'Prix Unitaire', key: 'unitPrice', width: 14 },
+      { header: 'Montant Total', key: 'amount', width: 15 },
+      { header: 'Règlement Cumulé', key: 'payment', width: 18 },
+      { header: 'Balance', key: 'balance', width: 15 },
+      { header: 'Type de Solde', key: 'balanceType', width: 15 },
+      { header: 'Livré (Kg)', key: 'delivered', width: 12 },
+      { header: 'Statut', key: 'settled', width: 10 },
+      { header: 'Observation', key: 'observation', width: 30 },
+    ];
+
+    sales.forEach(s => {
+      ws.addRow({
+        clientName: s.clientName,
+        date: new Date(s.date).toISOString().slice(0, 10),
+        fishType: s.fishType,
+        quantity: s.quantity,
+        unitPrice: s.unitPrice,
+        amount: s.amount,
+        payment: s.payment,
+        balance: s.balance,
+        balanceType: s.balance > 0 ? 'Dette Client' : (s.balance < 0 ? 'Crédit Entreprise' : 'Soldé'),
+        delivered: s.delivered,
+        settled: s.settled ? 'Oui' : 'Non',
+        observation: s.observation || ''
+      });
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${clientName && clientName !== 'all' ? `bilan_${clientName.replace(/\s/g, '_')}` : 'bilan_global'}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 // Sommaire
 app.get('/api/summary', auth, async (req,res)=>{
@@ -275,7 +397,8 @@ app.get('/api/summary', auth, async (req,res)=>{
     });
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
-// Export Excel
+
+// Export Excel général (inchangé)
 app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   try{
     const sales = await Sale.find({ owner:req.user.uid }).sort({ date:-1, createdAt:-1 });
