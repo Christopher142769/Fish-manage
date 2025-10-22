@@ -247,6 +247,107 @@ function AuthView({ onAuth }) {
 /** =====================================
  * SALE FORM
  * ===================================== */
+// function SaleForm({ onSaved }) {
+//   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+//   const [clientName, setClient] = useState("");
+//   const [fishType, setFishType] = useState("tilapia");
+//   const [quantity, setQty] = useState("");
+//   const [delivered, setDelivered] = useState("");
+//   const [unitPrice, setUnit] = useState("");
+//   const [payment, setPay] = useState("");
+//   const [observation, setObs] = useState("");
+//   const [loading, setLoading] = useState(false);
+
+//   const amount = (Number(quantity || 0) * Number(unitPrice || 0)) || 0;
+//   const balance = Math.max(0, amount - Number(payment || 0));
+//   const remainingToDeliver = Math.max(0, Number(quantity || 0) - Number(delivered || 0));
+
+//   const save = async (e) => {
+//     e.preventDefault();
+//     setLoading(true);
+//     try {
+//       const res = await apiFetch("/api/sales", {
+//         method: "POST",
+//         body: JSON.stringify({
+//           date, clientName, fishType,
+//           quantity: Number(quantity),
+//           delivered: Number(delivered || 0),
+//           unitPrice: Number(unitPrice),
+//           payment: Number(payment || 0),
+//           observation,
+//         }),
+//       });
+//       const data = await res.json();
+//       if (!res.ok) throw new Error(data.error || "Erreur");
+//       setClient(""); setQty(""); setDelivered(""); setUnit(""); setPay(""); setObs("");
+//       onSaved && onSaved(data);
+//       // Déclenche l'événement pour recharger le tableau
+//       window.dispatchEvent(new Event("reload-sales")); 
+//     } catch (err) { alert(err.message); }
+//     finally { setLoading(false); }
+//   };
+
+//   return (
+//     <div className="card border-0 shadow rounded-4 mb-4 bg-white">
+//       <div className="card-header bg-primary text-white rounded-top-4 p-3 d-flex align-items-center">
+//         <i className="bi bi-bag-plus-fill me-2 fs-5"></i>
+//         <h5 className="m-0">Nouvelle Vente Rapide</h5>
+//       </div>
+//       <div className="card-body p-4">
+//         <form onSubmit={save} className="row g-3">
+//           <div className="col-12">
+//             <label className="form-label small fw-semibold">Client / Entreprise</label>
+//             <input className="form-control" value={clientName} onChange={(e) => setClient(e.target.value)} required />
+//           </div>
+//           <div className="col-6 col-sm-6 col-md-6 col-lg-3">
+//             <label className="form-label small fw-semibold">Date</label>
+//             <input type="date" className="form-control" value={date} onChange={(e) => setDate(e.target.value)} required />
+//           </div>
+//           <div className="col-6 col-sm-6 col-md-6 col-lg-3">
+//             <label className="form-label small fw-semibold">Poisson</label>
+//             <select className="form-select" value={fishType} onChange={(e) => setFishType(e.target.value)}>
+//               <option value="tilapia">Tilapia</option>
+//               <option value="pangasius">Pangasius</option>
+//             </select>
+//           </div>
+//           <div className="col-6 col-md-3">
+//             <label className="form-label small fw-semibold">Qté Commandée (kg)</label>
+//             <input type="number" step="0.01" className="form-control" value={quantity} onChange={(e) => setQty(e.target.value)} required />
+//           </div>
+//           <div className="col-6 col-md-3">
+//             <label className="form-label small fw-semibold">Prix Unitaire (XOF)</label>
+//             <input type="number" step="0.01" className="form-control" value={unitPrice} onChange={(e) => setUnit(e.target.value)} required />
+//           </div>
+//           <div className="col-6 col-md-3">
+//             <label className="form-label small fw-semibold">Qté Livrée (kg)</label>
+//             <input type="number" step="0.01" className="form-control" value={delivered} onChange={(e) => setDelivered(e.target.value)} />
+//           </div>
+//           <div className="col-6 col-md-3">
+//             <label className="form-label small fw-semibold">Règlement Payé (XOF)</label>
+//             <input type="number" step="0.01" className="form-control" value={payment} onChange={(e) => setPay(e.target.value)} />
+//           </div>
+//           <div className="col-12">
+//             <label className="form-label small fw-semibold">Observation</label>
+//             <input className="form-control" value={observation} onChange={(e) => setObs(e.target.value)} placeholder="Notes de la vente..." />
+//           </div>
+
+//           <div className="col-12 d-grid gap-2 mt-4">
+//             <button className="btn btn-primary btn-lg rounded-pill" disabled={loading}>
+//               <i className={`bi ${loading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>
+//               {loading ? "Enregistrement en cours..." : "Enregistrer la Vente"}
+//             </button>
+//           </div>
+
+//           <div className="col-12 d-flex justify-content-between flex-wrap pt-3 mt-3 border-top">
+//             <span className="badge bg-secondary p-2">Montant: <strong className="fs-6">{money(amount)}</strong></span>
+//             <span className="badge bg-warning text-dark p-2">Reste à livrer: <strong className="fs-6">{remainingToDeliver} kg</strong></span>
+//             <span className="badge bg-danger p-2">Solde à payer: <strong className="fs-6">{money(balance)}</strong></span>
+//           </div>
+//         </form>
+//       </div>
+//     </div>
+//   );
+// }
 function SaleForm({ onSaved }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [clientName, setClient] = useState("");
@@ -265,15 +366,37 @@ function SaleForm({ onSaved }) {
   const save = async (e) => {
     e.preventDefault();
     setLoading(true);
+
     try {
+      // --- NOUVELLE VALIDATION FRONTEND DANS SALE FORM ---
+      const q = Number(quantity || 0);
+      const d = Number(delivered || 0);
+      const u = Number(unitPrice || 0);
+      const p = Number(payment || 0);
+
+      if (q <= 0) throw new Error("La quantité commandée doit être positive.");
+      if (u <= 0) throw new Error("Le prix unitaire doit être positif.");
+
+      // 1. Validation de la livraison : Livré <= Quantité Commandée
+      if (d > q) {
+        throw new Error(`La quantité livrée (${d} kg) ne peut pas dépasser la quantité commandée (${q} kg).`);
+      }
+
+      // 2. Validation du paiement : Payé <= Montant Total
+      const totalAmount = q * u;
+      if (p > totalAmount) {
+        throw new Error(`Le montant payé (${money(p)}) ne peut pas dépasser le montant total de la vente (${money(totalAmount)}).`);
+      }
+      // --------------------------------------------------
+
       const res = await apiFetch("/api/sales", {
         method: "POST",
         body: JSON.stringify({
           date, clientName, fishType,
-          quantity: Number(quantity),
-          delivered: Number(delivered || 0),
-          unitPrice: Number(unitPrice),
-          payment: Number(payment || 0),
+          quantity: q,
+          delivered: d,
+          unitPrice: u,
+          payment: p,
           observation,
         }),
       });
@@ -348,7 +471,6 @@ function SaleForm({ onSaved }) {
     </div>
   );
 }
-
 /** =====================================
  * SALES TABLE + ACTIONS
  * ===================================== */
@@ -383,24 +505,62 @@ function SalesTable() {
     }
   };
 
-  const submitAction = async (sale) => {
-    try {
-      if (actionType === "deliver") {
-        const qty = Number(actionValue || 0);
-        if (qty <= 0) throw new Error("Quantité invalide.");
-        const res = await apiFetch(`/api/sales/${sale._id}/deliver`, { method: "PATCH", body: JSON.stringify({ qty }) });
-        const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur livraison");
-        setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
-      } else if (actionType === "pay") {
-        const amount = Number(actionValue || 0);
-        if (amount <= 0) throw new Error("Montant invalide.");
-        const res = await apiFetch(`/api/sales/${sale._id}/pay`, { method: "PATCH", body: JSON.stringify({ amount }) });
-        const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur règlement");
-        setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
+  // const submitAction = async (sale) => {
+  //   try {
+  //     if (actionType === "deliver") {
+  //       const qty = Number(actionValue || 0);
+  //       if (qty <= 0) throw new Error("Quantité invalide.");
+  //       const res = await apiFetch(`/api/sales/${sale._id}/deliver`, { method: "PATCH", body: JSON.stringify({ qty }) });
+  //       const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur livraison");
+  //       setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
+  //     } else if (actionType === "pay") {
+  //       const amount = Number(actionValue || 0);
+  //       if (amount <= 0) throw new Error("Montant invalide.");
+  //       const res = await apiFetch(`/api/sales/${sale._id}/pay`, { method: "PATCH", body: JSON.stringify({ amount }) });
+  //       const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur règlement");
+  //       setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
+  //     }
+  //     setOpenRow(null); setActionType(""); setActionValue("");
+  //   } catch (e) { alert(e.message); }
+  // };
+  // App.js (dans le composant SalesTable)
+
+const submitAction = async (sale) => {
+  try {
+    if (actionType === "deliver") {
+      const qty = Number(actionValue || 0);
+      if (qty <= 0) throw new Error("Quantité invalide.");
+
+      // --- NOUVELLE VALIDATION FRONTEND POUR LA LIVRAISON ---
+      const remainingToDeliver = Math.max(0, sale.quantity - (sale.delivered || 0));
+      if (qty > remainingToDeliver) {
+          throw new Error(`La quantité à livrer (${qty} kg) dépasse le reste à livrer (${remainingToDeliver} kg).`);
       }
-      setOpenRow(null); setActionType(""); setActionValue("");
-    } catch (e) { alert(e.message); }
-  };
+      // --------------------------------------------------
+
+      const res = await apiFetch(`/api/sales/${sale._id}/deliver`, { method: "PATCH", body: JSON.stringify({ qty }) });
+      const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur livraison");
+      setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
+    } else if (actionType === "pay") {
+      const amount = Number(actionValue || 0);
+      if (amount <= 0) throw new Error("Montant invalide.");
+
+      // --- NOUVELLE VALIDATION FRONTEND POUR LE PAIEMENT ---
+      // Utilisation de la fonction 'money' pour un meilleur affichage dans l'erreur
+      const remainingToPay = Math.max(0, (sale.amount || 0) - (sale.payment || 0));
+      if (amount > remainingToPay) {
+        // 'money' doit être disponible ici, comme il l'est dans le reste du fichier.
+        throw new Error(`Le montant de règlement (${money(amount)}) dépasse le solde dû (${money(remainingToPay)}).`);
+      }
+      // --------------------------------------------------
+
+      const res = await apiFetch(`/api/sales/${sale._id}/pay`, { method: "PATCH", body: JSON.stringify({ amount }) });
+      const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur règlement");
+      setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
+    }
+    setOpenRow(null); setActionType(""); setActionValue("");
+  } catch (e) { alert(e.message); }
+};
 
   const settleAll = async (id) => {
     if (!window.confirm("Solder totalement cette vente ?")) return;
