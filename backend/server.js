@@ -79,7 +79,7 @@ saleSchema.pre('validate', function(next){
 const User = mongoose.model('User', userSchema);
 const Sale = mongoose.model('Sale', saleSchema);
 
-/* ---------------- Compensation Globale (NOUVEAU) ---------------- */
+/* ---------------- Compensation Globale ---------------- */
 
 /**
  * Tente de compenser toutes les dettes non soldées d'un client 
@@ -182,7 +182,7 @@ async function compensateClientDebts(clientName, ownerId, session) {
     return newCredit.length > 0 ? newCredit[0].totalCredit : 0;
 }
 
-// NOUVELLE ROUTE : Compensation Globale (pour le front-end)
+// ROUTE : Compensation Globale (pour le front-end)
 app.patch('/api/sales/compensate-client/:clientName', auth, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -235,11 +235,15 @@ app.post('/api/auth/login', async (req,res)=>{
 });
 
 /* ---------------- Routes VENTES ---------------- */
-// Créer une vente
+// Créer une vente (CORRECTION MAJEURE: Ajout transaction + compensation immédiate)
 app.post('/api/sales', auth, async (req,res)=>{
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try{
     const { date, clientName, fishType, quantity, delivered=0, unitPrice, payment=0, observation='' } = req.body;
-    const sale = await Sale.create({
+    
+    // Création en tableau pour utiliser la session, et on récupère le premier (et seul) élément créé.
+    const [newSale] = await Sale.create([{ 
       owner: req.user.uid,
       date: date ? new Date(date) : new Date(),
       clientName, fishType,
@@ -247,12 +251,25 @@ app.post('/api/sales', auth, async (req,res)=>{
       unitPrice:Number(unitPrice),
       payment:Number(payment),
       observation
-    });
-    res.json(sale);
-  }catch(e){ res.status(400).json({ error:e.message }); }
+    }], { session }); 
+    
+    // Déclenchement de la compensation globale pour le client (si nouveau crédit/dette)
+    await compensateClientDebts(clientName, req.user.uid, session);
+    
+    await session.commitTransaction();
+    
+    // Recharger la vente (maintenant que la compensation a eu lieu) pour renvoyer le dernier état
+    const updatedSale = await Sale.findById(newSale._id);
+    res.json(updatedSale); 
+  }catch(e){ 
+    await session.abortTransaction();
+    res.status(400).json({ error:e.message }); 
+  }finally {
+    session.endSession();
+  }
 });
 
-// Lister ventes
+// Lister ventes (inchangé)
 app.get('/api/sales', auth, async (req,res)=>{
   try{
     const { fishType, client, settled } = req.query;
@@ -266,7 +283,7 @@ app.get('/api/sales', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Payer une partie (autorise le surplus AVEC compensation automatique)
+// Payer une partie (inchangé, contient déjà la compensation)
 app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -291,7 +308,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
     // Sauvegarde de l'état de la vente (potentiellement avec le nouveau crédit)
     await sale.save({ session }); 
 
-    // 🚨 MODIFIÉ : Déclenchement de la compensation globale
+    // Déclenchement de la compensation globale
     await compensateClientDebts(sale.clientName, req.user.uid, session);
     
     await session.commitTransaction();
@@ -307,7 +324,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
 });
 
 
-// Rembourser une partie du crédit client
+// Rembourser une partie du crédit client (inchangé, contient déjà la compensation)
 app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -327,7 +344,7 @@ app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
     await sale.validate();
     await sale.save({ session });
     
-    // 🚨 NOUVEAU : Appel à la compensation après ajustement du crédit
+    // Appel à la compensation après ajustement du crédit
     await compensateClientDebts(sale.clientName, req.user.uid, session);
 
     await session.commitTransaction();
@@ -343,7 +360,7 @@ app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
   }
 });
 
-// Solder tout (paie l'exact manquant pour atteindre amount, sans surplus)
+// Solder tout (inchangé, contient déjà la compensation)
 app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -351,13 +368,13 @@ app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid }).session(session);
     if(!sale) { await session.abortTransaction(); return res.status(404).json({ error:'Vente introuvable' }); }
     
-    // MODIFIÉ : Ajouter le montant exact qui manque pour atteindre le montant de la vente
+    // Ajouter le montant exact qui manque pour atteindre amount, sans surplus
     sale.payment += Math.max(0, sale.amount - sale.payment);
     
     await sale.validate();
     await sale.save({ session });
 
-    // 🚨 NOUVEAU : Appel à la compensation après règlement (par précaution)
+    // Appel à la compensation après règlement
     await compensateClientDebts(sale.clientName, req.user.uid, session);
     
     await session.commitTransaction();
@@ -373,7 +390,7 @@ app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
   }
 });
 
-// Livrer une quantité (inchangée)
+// Livrer une quantité (inchangé)
 app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
   try{
     const { qty } = req.body;
@@ -388,7 +405,7 @@ app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
-// Dashboard dettes clients (client doit à l'entreprise, balance > 0)
+// Dashboard dettes clients (inchangé)
 app.get('/api/dashboard/debts', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
@@ -401,7 +418,7 @@ app.get('/api/dashboard/debts', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Dashboard crédits clients (entreprise doit au client, balance < 0)
+// Dashboard crédits clients (inchangé)
 app.get('/api/dashboard/credits', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
@@ -414,7 +431,7 @@ app.get('/api/dashboard/credits', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// NOUVELLE ROUTE : Liste de tous les clients pour le bilan
+// NOUVELLE ROUTE : Liste de tous les clients pour le bilan (inchangé)
 app.get('/api/clients', auth, async (req, res) => {
   try {
     const clients = await Sale.distinct('clientName', { owner: req.user.uid });
@@ -425,7 +442,7 @@ app.get('/api/clients', auth, async (req, res) => {
 });
 
 
-// NOUVELLE ROUTE : Export Excel du bilan client (ou de tous)
+// NOUVELLE ROUTE : Export Excel du bilan client (ou de tous) (inchangé)
 app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
   try {
     const { clientName } = req.query;
