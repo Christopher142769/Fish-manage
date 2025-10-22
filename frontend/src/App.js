@@ -247,107 +247,6 @@ function AuthView({ onAuth }) {
 /** =====================================
  * SALE FORM
  * ===================================== */
-// function SaleForm({ onSaved }) {
-//   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-//   const [clientName, setClient] = useState("");
-//   const [fishType, setFishType] = useState("tilapia");
-//   const [quantity, setQty] = useState("");
-//   const [delivered, setDelivered] = useState("");
-//   const [unitPrice, setUnit] = useState("");
-//   const [payment, setPay] = useState("");
-//   const [observation, setObs] = useState("");
-//   const [loading, setLoading] = useState(false);
-
-//   const amount = (Number(quantity || 0) * Number(unitPrice || 0)) || 0;
-//   const balance = Math.max(0, amount - Number(payment || 0));
-//   const remainingToDeliver = Math.max(0, Number(quantity || 0) - Number(delivered || 0));
-
-//   const save = async (e) => {
-//     e.preventDefault();
-//     setLoading(true);
-//     try {
-//       const res = await apiFetch("/api/sales", {
-//         method: "POST",
-//         body: JSON.stringify({
-//           date, clientName, fishType,
-//           quantity: Number(quantity),
-//           delivered: Number(delivered || 0),
-//           unitPrice: Number(unitPrice),
-//           payment: Number(payment || 0),
-//           observation,
-//         }),
-//       });
-//       const data = await res.json();
-//       if (!res.ok) throw new Error(data.error || "Erreur");
-//       setClient(""); setQty(""); setDelivered(""); setUnit(""); setPay(""); setObs("");
-//       onSaved && onSaved(data);
-//       // Déclenche l'événement pour recharger le tableau
-//       window.dispatchEvent(new Event("reload-sales")); 
-//     } catch (err) { alert(err.message); }
-//     finally { setLoading(false); }
-//   };
-
-//   return (
-//     <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-//       <div className="card-header bg-primary text-white rounded-top-4 p-3 d-flex align-items-center">
-//         <i className="bi bi-bag-plus-fill me-2 fs-5"></i>
-//         <h5 className="m-0">Nouvelle Vente Rapide</h5>
-//       </div>
-//       <div className="card-body p-4">
-//         <form onSubmit={save} className="row g-3">
-//           <div className="col-12">
-//             <label className="form-label small fw-semibold">Client / Entreprise</label>
-//             <input className="form-control" value={clientName} onChange={(e) => setClient(e.target.value)} required />
-//           </div>
-//           <div className="col-6 col-sm-6 col-md-6 col-lg-3">
-//             <label className="form-label small fw-semibold">Date</label>
-//             <input type="date" className="form-control" value={date} onChange={(e) => setDate(e.target.value)} required />
-//           </div>
-//           <div className="col-6 col-sm-6 col-md-6 col-lg-3">
-//             <label className="form-label small fw-semibold">Poisson</label>
-//             <select className="form-select" value={fishType} onChange={(e) => setFishType(e.target.value)}>
-//               <option value="tilapia">Tilapia</option>
-//               <option value="pangasius">Pangasius</option>
-//             </select>
-//           </div>
-//           <div className="col-6 col-md-3">
-//             <label className="form-label small fw-semibold">Qté Commandée (kg)</label>
-//             <input type="number" step="0.01" className="form-control" value={quantity} onChange={(e) => setQty(e.target.value)} required />
-//           </div>
-//           <div className="col-6 col-md-3">
-//             <label className="form-label small fw-semibold">Prix Unitaire (XOF)</label>
-//             <input type="number" step="0.01" className="form-control" value={unitPrice} onChange={(e) => setUnit(e.target.value)} required />
-//           </div>
-//           <div className="col-6 col-md-3">
-//             <label className="form-label small fw-semibold">Qté Livrée (kg)</label>
-//             <input type="number" step="0.01" className="form-control" value={delivered} onChange={(e) => setDelivered(e.target.value)} />
-//           </div>
-//           <div className="col-6 col-md-3">
-//             <label className="form-label small fw-semibold">Règlement Payé (XOF)</label>
-//             <input type="number" step="0.01" className="form-control" value={payment} onChange={(e) => setPay(e.target.value)} />
-//           </div>
-//           <div className="col-12">
-//             <label className="form-label small fw-semibold">Observation</label>
-//             <input className="form-control" value={observation} onChange={(e) => setObs(e.target.value)} placeholder="Notes de la vente..." />
-//           </div>
-
-//           <div className="col-12 d-grid gap-2 mt-4">
-//             <button className="btn btn-primary btn-lg rounded-pill" disabled={loading}>
-//               <i className={`bi ${loading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>
-//               {loading ? "Enregistrement en cours..." : "Enregistrer la Vente"}
-//             </button>
-//           </div>
-
-//           <div className="col-12 d-flex justify-content-between flex-wrap pt-3 mt-3 border-top">
-//             <span className="badge bg-secondary p-2">Montant: <strong className="fs-6">{money(amount)}</strong></span>
-//             <span className="badge bg-warning text-dark p-2">Reste à livrer: <strong className="fs-6">{remainingToDeliver} kg</strong></span>
-//             <span className="badge bg-danger p-2">Solde à payer: <strong className="fs-6">{money(balance)}</strong></span>
-//           </div>
-//         </form>
-//       </div>
-//     </div>
-//   );
-// }
 function SaleForm({ onSaved }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [clientName, setClient] = useState("");
@@ -360,7 +259,8 @@ function SaleForm({ onSaved }) {
   const [loading, setLoading] = useState(false);
 
   const amount = (Number(quantity || 0) * Number(unitPrice || 0)) || 0;
-  const balance = Math.max(0, amount - Number(payment || 0));
+  // La balance est calculée sans Math.max(0, ...) pour refléter le solde réel (crédit si négatif)
+  const balance = amount - Number(payment || 0); 
   const remainingToDeliver = Math.max(0, Number(quantity || 0) - Number(delivered || 0));
 
   const save = async (e) => {
@@ -368,7 +268,7 @@ function SaleForm({ onSaved }) {
     setLoading(true);
 
     try {
-      // --- NOUVELLE VALIDATION FRONTEND DANS SALE FORM ---
+      // --- VALIDATION FRONTEND DANS SALE FORM ---
       const q = Number(quantity || 0);
       const d = Number(delivered || 0);
       const u = Number(unitPrice || 0);
@@ -382,11 +282,7 @@ function SaleForm({ onSaved }) {
         throw new Error(`La quantité livrée (${d} kg) ne peut pas dépasser la quantité commandée (${q} kg).`);
       }
 
-      // 2. Validation du paiement : Payé <= Montant Total
-      const totalAmount = q * u;
-      if (p > totalAmount) {
-        throw new Error(`Le montant payé (${money(p)}) ne peut pas dépasser le montant total de la vente (${money(totalAmount)}).`);
-      }
+      // 2. Validation du paiement : PAIEMENT N'EST PLUS PLAFONNÉ. La validation du surplus est supprimée.
       // --------------------------------------------------
 
       const res = await apiFetch("/api/sales", {
@@ -464,7 +360,9 @@ function SaleForm({ onSaved }) {
           <div className="col-12 d-flex justify-content-between flex-wrap pt-3 mt-3 border-top">
             <span className="badge bg-secondary p-2">Montant: <strong className="fs-6">{money(amount)}</strong></span>
             <span className="badge bg-warning text-dark p-2">Reste à livrer: <strong className="fs-6">{remainingToDeliver} kg</strong></span>
-            <span className="badge bg-danger p-2">Solde à payer: <strong className="fs-6">{money(balance)}</strong></span>
+            <span className={`badge ${balance > 0 ? 'bg-danger' : 'bg-success'} p-2`}>
+              {balance > 0 ? "Solde à payer" : "Crédit Client"}: <strong className="fs-6">{money(Math.abs(balance))}</strong>
+            </span>
           </div>
         </form>
       </div>
@@ -505,65 +403,56 @@ function SalesTable() {
     }
   };
 
-  // const submitAction = async (sale) => {
-  //   try {
-  //     if (actionType === "deliver") {
-  //       const qty = Number(actionValue || 0);
-  //       if (qty <= 0) throw new Error("Quantité invalide.");
-  //       const res = await apiFetch(`/api/sales/${sale._id}/deliver`, { method: "PATCH", body: JSON.stringify({ qty }) });
-  //       const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur livraison");
-  //       setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
-  //     } else if (actionType === "pay") {
-  //       const amount = Number(actionValue || 0);
-  //       if (amount <= 0) throw new Error("Montant invalide.");
-  //       const res = await apiFetch(`/api/sales/${sale._id}/pay`, { method: "PATCH", body: JSON.stringify({ amount }) });
-  //       const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur règlement");
-  //       setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
-  //     }
-  //     setOpenRow(null); setActionType(""); setActionValue("");
-  //   } catch (e) { alert(e.message); }
-  // };
-  // App.js (dans le composant SalesTable)
+  const submitAction = async (sale) => {
+    try {
+      if (actionType === "deliver") {
+        const qty = Number(actionValue || 0);
+        if (qty <= 0) throw new Error("Quantité invalide.");
 
-const submitAction = async (sale) => {
-  try {
-    if (actionType === "deliver") {
-      const qty = Number(actionValue || 0);
-      if (qty <= 0) throw new Error("Quantité invalide.");
+        // --- VALIDATION DE LA LIVRAISON (MAINTENUE) ---
+        const remainingToDeliver = Math.max(0, sale.quantity - (sale.delivered || 0));
+        if (qty > remainingToDeliver) {
+            throw new Error(`La quantité à livrer (${qty} kg) dépasse le reste à livrer (${remainingToDeliver} kg).`);
+        }
+        // --------------------------------------------------
 
-      // --- NOUVELLE VALIDATION FRONTEND POUR LA LIVRAISON ---
-      const remainingToDeliver = Math.max(0, sale.quantity - (sale.delivered || 0));
-      if (qty > remainingToDeliver) {
-          throw new Error(`La quantité à livrer (${qty} kg) dépasse le reste à livrer (${remainingToDeliver} kg).`);
+        const res = await apiFetch(`/api/sales/${sale._id}/deliver`, { method: "PATCH", body: JSON.stringify({ qty }) });
+        const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur livraison");
+        setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
+      } else if (actionType === "pay") {
+        const amount = Number(actionValue || 0);
+        if (amount <= 0) throw new Error("Montant invalide.");
+
+        // --- VALIDATION DU PAIEMENT (SUPPRIMÉE) ---
+        // Permet un paiement en surplus (crédit)
+        // --------------------------------------------------
+
+        const res = await apiFetch(`/api/sales/${sale._id}/pay`, { method: "PATCH", body: JSON.stringify({ amount }) });
+        const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur règlement");
+        setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
+      } else if (actionType === "refund") { // 🚨 NOUVELLE LOGIQUE DE REMBOURSEMENT
+          const amount = Number(actionValue || 0);
+          if (amount <= 0) throw new Error("Montant invalide.");
+          
+          // Validation frontend pour s'assurer que le montant ne dépasse pas le crédit
+          // Le crédit disponible est l'opposé du solde (si négatif)
+          const maxRefundable = Math.max(0, (sale.payment || 0) - (sale.amount || 0));
+          if (amount > maxRefundable) {
+            throw new Error(`Le montant de remboursement (${money(amount)}) dépasse le crédit disponible (${money(maxRefundable)}).`);
+          }
+
+          const res = await apiFetch(`/api/sales/${sale._id}/refund`, { method: "PATCH", body: JSON.stringify({ amount }) });
+          const data = await res.json(); 
+          if (!res.ok) throw new Error(data.error || "Erreur remboursement");
+          
+          setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
       }
-      // --------------------------------------------------
-
-      const res = await apiFetch(`/api/sales/${sale._id}/deliver`, { method: "PATCH", body: JSON.stringify({ qty }) });
-      const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur livraison");
-      setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
-    } else if (actionType === "pay") {
-      const amount = Number(actionValue || 0);
-      if (amount <= 0) throw new Error("Montant invalide.");
-
-      // --- NOUVELLE VALIDATION FRONTEND POUR LE PAIEMENT ---
-      // Utilisation de la fonction 'money' pour un meilleur affichage dans l'erreur
-      const remainingToPay = Math.max(0, (sale.amount || 0) - (sale.payment || 0));
-      if (amount > remainingToPay) {
-        // 'money' doit être disponible ici, comme il l'est dans le reste du fichier.
-        throw new Error(`Le montant de règlement (${money(amount)}) dépasse le solde dû (${money(remainingToPay)}).`);
-      }
-      // --------------------------------------------------
-
-      const res = await apiFetch(`/api/sales/${sale._id}/pay`, { method: "PATCH", body: JSON.stringify({ amount }) });
-      const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur règlement");
-      setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
-    }
-    setOpenRow(null); setActionType(""); setActionValue("");
-  } catch (e) { alert(e.message); }
-};
+      setOpenRow(null); setActionType(""); setActionValue("");
+    } catch (e) { alert(e.message); }
+  };
 
   const settleAll = async (id) => {
-    if (!window.confirm("Solder totalement cette vente ?")) return;
+    if (!window.confirm("Solder totalement cette vente ? Cela paiera exactement le solde restant (sans créer de crédit).")) return;
     const res = await apiFetch(`/api/sales/${id}/settle`, { method: "PATCH" });
     const data = await res.json();
     if (!res.ok) return alert(data.error || "Erreur");
@@ -641,8 +530,13 @@ const submitAction = async (sale) => {
 
               {sales.map((s) => {
                 const remainingToDeliver = Math.max(0, s.quantity - (s.delivered || 0));
-                const remainingToPay = Math.max(0, (s.amount || 0) - (s.payment || 0));
-                const rowClass = s.balance > 0 ? "table-danger-subtle border-start border-danger border-4" : "";
+                const balance = s.balance || 0;
+                // Montant à payer est toujours Math.max(0, balance) pour le bouton "Max"
+                const remainingToPay = Math.max(0, balance); 
+                
+                let rowClass = "";
+                if (balance > 0) rowClass = "table-danger-subtle border-start border-danger border-4";
+                if (balance < 0) rowClass = "table-success-subtle border-start border-success border-4";
 
                 return (
                   <React.Fragment key={s._id}>
@@ -656,7 +550,10 @@ const submitAction = async (sale) => {
                       <td>{money(s.unitPrice)}</td>
                       <td>{money(s.amount)}</td>
                       <td>{money(s.payment)}</td>
-                      <td className={s.balance > 0 ? "text-danger fw-bold" : ""}>{money(s.balance)}</td>
+                      <td className={balance > 0 ? "text-danger fw-bold" : (balance < 0 ? "text-success fw-bold" : "")}>
+                        {money(Math.abs(balance))}
+                        {balance < 0 && <span className="small text-success"> (Crédit)</span>}
+                      </td>
                       <td>
                         {s.settled ? (
                           <span className="badge text-bg-success"><i className="bi bi-check-circle-fill"></i> Soldé</span>
@@ -671,15 +568,28 @@ const submitAction = async (sale) => {
                               <i className="bi bi-truck"></i> Livrer
                             </button>
                           )}
-                          {!s.settled && (
-                            <>
-                              <button className="btn btn-sm btn-secondary rounded-pill" onClick={() => toggleAction(s._id, "pay", remainingToPay)}>
-                                <i className="bi bi-wallet"></i> Régler
+                          <button 
+                            className="btn btn-sm btn-secondary rounded-pill" 
+                            onClick={() => toggleAction(s._id, "pay", remainingToPay)}
+                            disabled={s.settled && balance >= 0} 
+                          >
+                            <i className="bi bi-wallet"></i> Régler
+                          </button>
+                          
+                          {/* AJOUT : Bouton Rembourser si le client a un crédit (balance < 0) */}
+                          {balance < 0 && (
+                              <button 
+                                  className="btn btn-sm btn-success rounded-pill" 
+                                  onClick={() => toggleAction(s._id, "refund", Math.abs(balance))}
+                              >
+                                  <i className="bi bi-arrow-left-right"></i> Rembourser
                               </button>
-                              <button className="btn btn-sm btn-outline-success rounded-circle" title="Solder toute la dette" onClick={() => settleAll(s._id)}>
-                                <i className="bi bi-currency-dollar"></i>
-                              </button>
-                            </>
+                          )}
+                          
+                          {balance > 0 && (
+                            <button className="btn btn-sm btn-outline-success rounded-circle" title="Solder toute la dette" onClick={() => settleAll(s._id)}>
+                              <i className="bi bi-currency-dollar"></i>
+                            </button>
                           )}
                         </div>
                       </td>
@@ -702,20 +612,35 @@ const submitAction = async (sale) => {
                                 <button className="btn btn-primary" onClick={() => submitAction(s)}>Valider</button>
                                 <button className="btn btn-link text-danger" onClick={() => { setOpenRow(null); setActionType(""); }}>Annuler</button>
                               </div>
-                            ) : (
+                            ) : actionType === "pay" ? (
                               <div className="d-flex align-items-center gap-3 flex-wrap">
-                                <div className="small text-muted">Action : Règlement (Solde: {money(remainingToPay)})</div>
+                                <div className="small text-muted">Action : Règlement (Solde dû: {money(remainingToPay)})</div>
                                 <div className="input-group" style={{ maxWidth: 350 }}>
                                   <span className="input-group-text">Montant</span>
                                   <input type="number" min="0" step="0.01" className="form-control" value={actionValue} onChange={(e) => setActionValue(e.target.value)} />
-                                  <button className="btn btn-outline-secondary" onClick={() => setActionValue(remainingToPay)}>
-                                    Max
-                                  </button>
+                                  {remainingToPay > 0 && ( 
+                                    <button className="btn btn-outline-secondary" onClick={() => setActionValue(remainingToPay)}>
+                                      Max
+                                    </button>
+                                  )}
                                 </div>
                                 <button className="btn btn-secondary" onClick={() => submitAction(s)}>Valider</button>
                                 <button className="btn btn-link text-danger" onClick={() => { setOpenRow(null); setActionType(""); }}>Annuler</button>
                               </div>
-                            )}
+                            ) : actionType === "refund" ? ( // 🚨 AJOUT : UI de Remboursement
+                                <div className="d-flex align-items-center gap-3 flex-wrap">
+                                    <div className="small text-muted">Action : Remboursement (Crédit: {money(Math.abs(balance))})</div>
+                                    <div className="input-group" style={{ maxWidth: 350 }}>
+                                        <span className="input-group-text">Montant</span>
+                                        <input type="number" min="0" step="0.01" className="form-control" value={actionValue} onChange={(e) => setActionValue(e.target.value)} />
+                                        <button className="btn btn-outline-success" onClick={() => setActionValue(Math.abs(balance))}>
+                                            Max
+                                        </button>
+                                    </div>
+                                    <button className="btn btn-success" onClick={() => submitAction(s)}>Valider le Remboursement</button>
+                                    <button className="btn btn-link text-danger" onClick={() => { setOpenRow(null); setActionType(""); }}>Annuler</button>
+                                </div>
+                            ) : null} 
                           </div>
                         </td>
                       </tr>
@@ -756,7 +681,8 @@ function ChartsPanel() {
       const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const curr = monthlyMap.get(k) || { amount: 0, balance: 0 };
       curr.amount += Number(s.amount || 0);
-      curr.balance += Number(s.balance || 0);
+      // Pour les graphiques de dette, on utilise seulement le solde positif (dette client)
+      curr.balance += Math.max(0, Number(s.balance || 0)); 
       monthlyMap.set(k, curr);
       if (s.fishType === "tilapia") tilapiaAmount += Number(s.amount || 0);
       if (s.fishType === "pangasius") pangasiusAmount += Number(s.amount || 0);
@@ -879,7 +805,7 @@ function DueNotificationsPanel() {
     const now = Date.now();
     const cut = thresholdDays * 24 * 3600 * 1000;
     return sales
-      .filter((s) => Number(s.balance || 0) > 0 && now - new Date(s.date).getTime() > cut)
+      .filter((s) => Number(s.balance || 0) > 0 && now - new Date(s.date).getTime() > cut) // Balance > 0 = dette client
       .map((s) => ({ id: s._id, client: s.clientName, date: new Date(s.date), balance: s.balance, days: Math.floor((now - new Date(s.date).getTime()) / (24 * 3600 * 1000)) }))
       .sort((a, b) => b.days - a.days);
   }, [sales, thresholdDays]);
@@ -962,8 +888,11 @@ function SummaryCards() {
 
   const byTilapia = sum.byFish?.find((f) => f.fishType === "tilapia") || { amount: 0, payment: 0, balance: 0 };
   const byPanga = sum.byFish?.find((f) => f.fishType === "pangasius") || { amount: 0, payment: 0, balance: 0 };
+  
+  const totalBalanceAbs = Math.abs(sum.totalBalance);
+  const totalBalanceIsCredit = sum.totalBalance < 0;
 
-  const Card = ({ title, amount, iconClass, cardClass }) => (
+  const Card = ({ title, amount, iconClass, cardClass, isCredit }) => (
     <div className="col-12 col-md-4">
       <div className={`card border-0 shadow-sm rounded-4 ${cardClass} h-100`}>
         <div className="card-body d-flex align-items-center p-4">
@@ -972,6 +901,7 @@ function SummaryCards() {
           </div>
           <div>
             <div className="text-uppercase small opacity-75">{title}</div>
+            {isCredit && <div className="text-uppercase small opacity-75">(Crédit Net)</div>}
             <div className="h3 m-0 fw-bold">{money(amount)}</div>
           </div>
         </div>
@@ -983,7 +913,13 @@ function SummaryCards() {
     <div className="row g-4 mb-5">
       <Card title="Total Ventes" amount={sum.totalAmount} iconClass="bi-graph-up-arrow text-primary" cardClass="bg-primary text-white bg-opacity-75" />
       <Card title="Total Encaissé" amount={sum.totalPayment} iconClass="bi-check-circle-fill text-success" cardClass="bg-success text-white bg-opacity-75" />
-      <Card title="Solde/Encours" amount={sum.totalBalance} iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
+      <Card 
+        title={totalBalanceIsCredit ? "Crédit Net" : "Solde/Encours"} 
+        amount={totalBalanceAbs} 
+        isCredit={totalBalanceIsCredit}
+        iconClass={totalBalanceIsCredit ? "bi-arrow-down-circle-fill text-success" : "bi-currency-exchange text-danger"} 
+        cardClass={totalBalanceIsCredit ? "bg-success text-white bg-opacity-75" : "bg-danger text-white bg-opacity-75"} 
+      />
       <div className="col-12 col-md-6">
         <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
           <div className="card-body">
@@ -995,7 +931,10 @@ function SummaryCards() {
             <div className="row small text-muted">
               <div className="col-4">Ventes: <br /><strong className="text-primary">{money(byTilapia.amount)}</strong></div>
               <div className="col-4">Payé: <br /><strong className="text-success">{money(byTilapia.payment)}</strong></div>
-              <div className="col-4">Solde: <br /><strong className="text-danger">{money(byTilapia.balance)}</strong></div>
+              <div className="col-4">
+                {byTilapia.balance >= 0 ? "Solde:" : "Crédit:"} <br />
+                <strong className={byTilapia.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byTilapia.balance))}</strong>
+              </div>
             </div>
           </div>
         </div>
@@ -1011,7 +950,10 @@ function SummaryCards() {
             <div className="row small text-muted">
               <div className="col-4">Ventes: <br /><strong className="text-primary">{money(byPanga.amount)}</strong></div>
               <div className="col-4">Payé: <br /><strong className="text-success">{money(byPanga.payment)}</strong></div>
-              <div className="col-4">Solde: <br /><strong className="text-danger">{money(byPanga.balance)}</strong></div>
+              <div className="col-4">
+                {byPanga.balance >= 0 ? "Solde:" : "Crédit:"} <br />
+                <strong className={byPanga.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byPanga.balance))}</strong>
+              </div>
             </div>
           </div>
         </div>
@@ -1063,21 +1005,58 @@ function DebtsBoard() {
   );
 }
 
+/** =====================================
+ * CREDITS BOARD (NOUVEAU)
+ * ===================================== */
+function CreditsBoard() {
+  const [credits, setCredits] = useState([]);
+  useEffect(() => { (async () => {
+    const res = await apiFetch("/api/dashboard/credits");
+    const data = await res.json();
+    setCredits(Array.isArray(data) ? data : []);
+  })(); }, []);
+  const total = credits.reduce((sum, d) => sum + d.totalCredit, 0);
 
-// 🚨 CORRECTION DU HOOK MANQUANT 🚨
-// Cette fonction est utilisée dans renderPage de App, elle était manquante/mal définie
-// et est responsable du "hook" qui ne marchait pas, car elle permet de forcer le rechargement
-// du tableau après une nouvelle vente ou une action.
+  return (
+    <div className="card border-0 shadow rounded-4 bg-white">
+      <div className="card-body p-4">
+        <div className="d-flex align-items-center mb-4 pb-2 border-bottom">
+          <h5 className="m-0 fw-bold"><i className="bi bi-person-check-fill me-2 text-success"></i>Crédits Clients (Dû par l'entreprise)</h5>
+          <span className="ms-auto badge text-bg-success p-2 fs-6">Crédit Total: {money(total)}</span>
+        </div>
+        <div className="table-responsive" style={{ maxHeight: 300, overflowY: "auto" }}>
+          <table className="table align-middle table-sm table-hover">
+            <thead>
+              <tr className="table-light"><th>Client</th><th># Opérations</th><th>Crédit</th></tr>
+            </thead>
+            <tbody>
+              {credits.length === 0 && (
+                <tr><td colSpan="3" className="text-center py-3 text-muted">Aucun crédit client en cours.</td></tr>
+              )}
+              {credits.map((d) => (
+                <tr key={d.clientName} className="align-middle">
+                  <td className="fw-semibold">{d.clientName}</td>
+                  <td className="small text-muted">{d.count}</td>
+                  <td className="text-success fw-bolder">{money(d.totalCredit)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// Cette fonction est responsable du rechargement forcé du tableau après une nouvelle vente ou une action.
 function ReloadableSalesTable() {
-  // L'utilisation d'une clé force React à re-monter le composant SalesTable
   const [key, setKey] = useState(0); 
   useEffect(() => {
-    // Écoute l'événement de rechargement émis par SaleForm après un enregistrement
     const handler = () => setKey((k) => k + 1);
     window.addEventListener("reload-sales", handler);
     return () => window.removeEventListener("reload-sales", handler);
   }, []);
-  // On passe la clé au composant pour le forcer à recharger
   return <SalesTable key={key} />;
 }
 
@@ -1119,7 +1098,10 @@ export default function App() {
       case "debts":
         return (
           <>
-            <DebtsBoard />
+            <div className="row g-4 mb-4">
+              <div className="col-lg-6"><DebtsBoard /></div>
+              <div className="col-lg-6"><CreditsBoard /></div>
+            </div>
             <DueNotificationsPanel />
             <ReloadableSalesTable />
           </>
@@ -1139,8 +1121,11 @@ export default function App() {
             <DueNotificationsPanel />
             <ChartsPanel />
             <div className="row g-4 mt-1">
-              <div className="col-lg-4"><DebtsBoard /></div>
-              <div className="col-lg-8"><ReloadableSalesTable /></div>
+              <div className="col-lg-6"><DebtsBoard /></div>
+              <div className="col-lg-6"><CreditsBoard /></div>
+            </div>
+            <div className="row g-4 mt-4">
+              <div className="col-12"><ReloadableSalesTable /></div>
             </div>
           </>
         );
@@ -1154,7 +1139,6 @@ export default function App() {
         currentPage={currentPage}
         onNavigate={setCurrentPage}
         onLogout={handleLogout}
-        // La sidebar est toujours 'ouverte' sur desktop, mais son état est géré par isMdUp dans le composant
         open={sidebarOpen} 
         setOpen={setSidebarOpen}
         isMdUp={isMdUp}
@@ -1163,7 +1147,6 @@ export default function App() {
       <main
         className="flex-grow-1"
         style={{
-          // Pousse le contenu principal de la largeur de la sidebar si écran desktop
           marginLeft: isMdUp ? SIDEBAR_WIDTH : 0, 
           background: "#f0f2f5",
           minHeight: "100vh",
