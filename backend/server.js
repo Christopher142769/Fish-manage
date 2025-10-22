@@ -1,7 +1,5 @@
-// server.js (CODE FINAL ET CORRIGÉ)
-
-// (Le code d'initialisation, schémas, et middlewares reste inchangé)
-require('dotenv').config(); 
+// server.js
+require('dotenv').config(); // charge .env en premier
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -13,6 +11,7 @@ const morgan = require('morgan');
 
 const app = express();
 
+/* ---------------- CORS (global) ---------------- */
 const corsOptions = {
   origin: true, 
   methods: ['GET','POST','PATCH','PUT','DELETE','OPTIONS'],
@@ -21,6 +20,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
+/* --- Préflight universel (sans app.options('*', ...)) --- */
 app.use((req, res, next) => {
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
@@ -28,9 +28,11 @@ app.use((req, res, next) => {
   next();
 });
 
+/* ---------------- Middleware communs ---------------- */
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('tiny'));
 
+/* ---------------- Env & connexion Mongo ---------------- */
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 const MONGO_URI  = process.env.MONGO_URI  || 'mongodb://localhost:27017/poisson';
 const DB_NAME    = process.env.DB_NAME    || 'poisson';
@@ -172,7 +174,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
         // Trouver toutes les AUTRES ventes non soldées du MÊME client
         const clientDebts = await Sale.find({ 
             owner: req.user.uid,
-            clientName: sale.clientName,
+            clientName: sale.clientName, // 🚨 COMPENSATION STRICTEMENT INTRA-CLIENT
             _id: { $ne: sale._id }, 
             settled: false 
         }).sort({ date: 1, createdAt: 1 }).session(session);
@@ -188,7 +190,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
             if (due > 0) {
                 const compensation = Math.min(surplus, due);
                 
-                // Appliquer la compensation à l'ancienne dette - Utilisation de findByIdAndUpdate pour la robustesse
+                // CORRECTION ATOMIQUE : Appliquer la compensation à l'ancienne dette
                 await Sale.findByIdAndUpdate(debtSale._id, {
                     $inc: { payment: compensation }
                 }, { 
@@ -206,7 +208,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
         const compensatedAmount = initialSurplus - surplus;
 
         if (compensatedAmount > 0) {
-            // Le surplus utilisé pour payer les autres dettes est retiré de la ligne de paiement actuelle.
+            // Retirer le surplus utilisé pour compenser d'autres dettes
             sale.payment -= compensatedAmount;
             await sale.validate(); 
             // Re-sauvegarder la vente initiale avec le paiement ajusté.
@@ -222,7 +224,8 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
     
     await session.commitTransaction();
     // Renvoyer l'état final de la vente initiale
-    res.json(sale);
+    const updatedSale = await Sale.findById(sale._id);
+    res.json(updatedSale);
   }catch(e){ 
     await session.abortTransaction();
     res.status(400).json({ error:e.message }); 
