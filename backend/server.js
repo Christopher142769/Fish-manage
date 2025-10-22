@@ -486,10 +486,12 @@ app.get('/api/summary', auth, async (req,res)=>{
     const finalTotals = totals || defaultTotals;
 
     // --- Calcul des Dettes et Crédits ACTUELS (Non filtrés par date) ---
-    // Si isGlobal=true, on prend TOUT. Sinon, on utilise le filtre clientName s'il existe.
     const q_current_balance = { owner: new mongoose.Types.ObjectId(req.user.uid) };
-    if (isGlobal !== 'true' && clientName) q_current_balance.clientName = clientName; 
-
+    
+    // Si isGlobal=true, ou si un client est spécifié, on applique le filtre de clientName.
+    // SINON (Dashboard "Tous les clients"), on prend tous les clients pour les dettes/crédits bruts.
+    if (clientName) q_current_balance.clientName = clientName; 
+    
     // Total Dettes
     const [totalDebtResult] = await Sale.aggregate([
         { $match: { ...q_current_balance, balance: { $gt: 0 } } },
@@ -508,7 +510,7 @@ app.get('/api/summary', auth, async (req,res)=>{
       totalAmount: Number(finalTotals.totalAmount.toFixed(2)), 
       totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
       totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
-      // Dettes/Crédits globaux si isGlobal=true, ou dettes/crédits ACTUELS du client sinon
+      // Dettes/Crédits globaux si pas de clientName, ou dettes/crédits ACTUELS du client sinon
       totalDebt: (totalDebtResult && totalDebtResult.totalDebt) || 0,
       totalCredit: (totalCreditResult && totalCreditResult.totalCredit) || 0,
       byFish: byFish.map(f => ({
