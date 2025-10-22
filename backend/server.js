@@ -79,7 +79,7 @@ saleSchema.pre('validate', function(next){
 const User = mongoose.model('User', userSchema);
 const Sale = mongoose.model('Sale', saleSchema);
 
-/* ---------------- Compensation Globale ---------------- */
+/* ---------------- Compensation Globale (CORRIGÉE) ---------------- */
 
 /**
  * Tente de compenser toutes les dettes non soldées d'un client 
@@ -91,7 +91,7 @@ const Sale = mongoose.model('Sale', saleSchema);
  */
 async function compensateClientDebts(clientName, ownerId, session) {
     // 1. Trouver toutes les ventes (dettes & crédits) du client
-    const allSales = await Sale.find({ 
+    let allSales = await Sale.find({ 
         owner: ownerId,
         clientName: clientName, 
     }).sort({ date: 1, createdAt: 1 }).session(session);
@@ -136,6 +136,14 @@ async function compensateClientDebts(clientName, ownerId, session) {
         }
     }
 
+    // 🚨 CORRECTION : Recharger les ventes pour avoir les balances à jour.
+    // Les changements sur les dettes (point 2) ont pu consommer une partie du crédit.
+    allSales = await Sale.find({ 
+        owner: ownerId,
+        clientName: clientName, 
+    }).sort({ date: 1, createdAt: 1 }).session(session);
+
+
     // 3. Ajuster les lignes de crédit originales (les ventes avec balance < 0)
     if (compensationUsed > 0) {
         let compensationLeftToDistribute = compensationUsed;
@@ -155,8 +163,6 @@ async function compensateClientDebts(clientName, ownerId, session) {
             const amountToApply = Math.min(compensationLeftToDistribute, availableCredit);
             
             // Nouveau paiement = Paiement initial - montant de l'utilisation
-            // Si la ligne de crédit a un paiement de 700k pour amount 100k (crédit de 600k), 
-            // et qu'on utilise 100k, le nouveau paiement devient 600k (crédit de 500k).
             const newPayment = creditSale.payment - amountToApply; 
             
             await Sale.findByIdAndUpdate(creditSale._id, {
