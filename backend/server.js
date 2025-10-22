@@ -156,61 +156,69 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
   session.startTransaction();
   try{
     const { amount } = req.body;
+    const paymentAmount = Math.max(0, Number(amount||0));
+
+    // 1. Trouver la vente initiale
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid }).session(session);
     if(!sale) { await session.abortTransaction(); return res.status(404).json({ error:'Vente introuvable' }); }
     
-    let paymentAmount = Math.max(0, Number(amount||0));
+    // Si aucun montant n'est fourni, ne rien faire
+    if (paymentAmount === 0) {
+        await session.commitTransaction();
+        return res.json(sale);
+    }
     
-    if (paymentAmount > 0) {
-      
-      // 1. Appliquer le paiement à la vente actuelle
-      sale.payment += paymentAmount;
-      await sale.validate();
-      await sale.save({ session });
-      
-      let surplus = Math.max(0, sale.payment - sale.amount);
-      
-      // 2. Si un surplus existe, chercher les autres dettes du même client pour compensation
-      if (surplus > 0) {
+    // Augmenter le paiement de la vente initiale
+    sale.payment += paymentAmount;
+    await sale.validate();
+    
+    let surplus = Math.max(0, sale.payment - sale.amount);
+    
+    // 2. Si un surplus existe, chercher les autres dettes pour compensation
+    if (surplus > 0) {
         
-        // Trouver toutes les AUTRES ventes non soldées du MÊME client (balance > 0)
+        // Trouver toutes les AUTRES ventes non soldées du MÊME client
         const clientDebts = await Sale.find({ 
-          owner: req.user.uid,
-          clientName: sale.clientName,
-          _id: { $ne: sale._id }, 
-          // MODIFIÉ : On se base sur le statut settled: false pour trouver les dettes à compenser
-          settled: false 
+            owner: req.user.uid,
+            clientName: sale.clientName,
+            _id: { $ne: sale._id }, 
+            settled: false // Les dettes non soldées
         }).sort({ date: 1, createdAt: 1 }).session(session);
         
+        const initialSurplus = surplus;
+        
         for (const debtSale of clientDebts) {
-          if (surplus <= 0) break; 
-          
-          // Recalculer le solde dû pour cette dette
-          const due = Math.max(0, debtSale.amount - debtSale.payment); 
-          
-          if (due > 0) {
-              const compensation = Math.min(surplus, due);
-              
-              // Appliquer la compensation : augmenter le paiement
-              debtSale.payment += compensation;
-              await debtSale.validate(); // Recalculer balance et settled
-              await debtSale.save({ session }); 
-              
-              // Diminuer le surplus restant
-              surplus -= compensation;
-          }
+            if (surplus <= 0) break; 
+            
+            // Le montant dû par le client sur cette ligne de dette
+            const due = Math.max(0, debtSale.amount - debtSale.payment); 
+            
+            if (due > 0) {
+                const compensation = Math.min(surplus, due);
+                
+                // Appliquer la compensation à l'ancienne dette
+                debtSale.payment += compensation;
+                await debtSale.validate(); // Recalcule balance et settled
+                await debtSale.save({ session }); 
+                
+                // Diminuer le surplus restant à compenser
+                surplus -= compensation;
+            }
         }
         
-        // 3. Ajustement de la vente initiale si une partie du crédit a été utilisée
-        const initialCredit = sale.payment - sale.amount;
-        const compensatedAmount = initialCredit - surplus;
+        // 3. Ajustement FINAL de la vente initiale
+        // Si le surplus total (initialSurplus) a été compensé, nous devons le retirer de la vente actuelle
+        // Le montant utilisé pour compenser d'autres dettes est : initialSurplus - surplus (restant)
+        const compensatedAmount = initialSurplus - surplus;
 
         if (compensatedAmount > 0) {
+            // Le surplus utilisé pour payer les autres dettes est retiré de la ligne de paiement actuelle,
+            // pour que cette ligne n'affiche que le solde non compensé (soit 0, soit le crédit restant).
             sale.payment -= compensatedAmount;
             await sale.validate(); 
+            // Re-sauvegarder la vente initiale avec le paiement ajusté.
             await sale.save({ session }); 
         }
-      }
     }
     
     await session.commitTransaction();
