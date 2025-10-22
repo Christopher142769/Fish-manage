@@ -196,10 +196,14 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
             if (due > 0) {
                 const compensation = Math.min(surplus, due);
                 
-                // Appliquer la compensation à l'ancienne dette
-                debtSale.payment += compensation;
-                await debtSale.validate(); // Recalcule balance et settled
-                await debtSale.save({ session }); 
+                // Appliquer la compensation à l'ancienne dette - Utilisation de findByIdAndUpdate pour la robustesse
+                await Sale.findByIdAndUpdate(debtSale._id, {
+                    $inc: { payment: compensation }
+                }, { 
+                    new: true, 
+                    runValidators: true, 
+                    session: session 
+                });
                 
                 // Diminuer le surplus restant à compenser
                 surplus -= compensation;
@@ -207,18 +211,21 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
         }
         
         // 3. Ajustement FINAL de la vente initiale
-        // Si le surplus total (initialSurplus) a été compensé, nous devons le retirer de la vente actuelle
-        // Le montant utilisé pour compenser d'autres dettes est : initialSurplus - surplus (restant)
         const compensatedAmount = initialSurplus - surplus;
 
         if (compensatedAmount > 0) {
-            // Le surplus utilisé pour payer les autres dettes est retiré de la ligne de paiement actuelle,
-            // pour que cette ligne n'affiche que le solde non compensé (soit 0, soit le crédit restant).
+            // Le surplus utilisé pour payer les autres dettes est retiré de la ligne de paiement actuelle.
             sale.payment -= compensatedAmount;
             await sale.validate(); 
             // Re-sauvegarder la vente initiale avec le paiement ajusté.
             await sale.save({ session }); 
+        } else {
+             // Si aucune compensation n'a eu lieu, on sauvegarde la vente initiale telle qu'elle est.
+             await sale.save({ session });
         }
+    } else {
+        // Si le paiement n'était pas un surplus, on sauvegarde la vente initiale
+        await sale.save({ session });
     }
     
     await session.commitTransaction();
