@@ -11,15 +11,23 @@ const morgan = require('morgan');
 
 const app = express();
 
-/* ---------------- CORS (préflight global) ---------------- */
+/* ---------------- CORS (global) ---------------- */
 const corsOptions = {
-  origin: true, // en prod, remplace par l'URL de ton front: ex. 'https://ton-front.com'
+  origin: true, // en prod, mets l'URL de ton front (ex: 'https://ton-front.com')
   methods: ['GET','POST','PATCH','PUT','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
   credentials: true,
 };
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // IMPORTANT: répond aux preflights sur toute route
+
+/* --- Préflight universel (sans app.options('*', ...)) --- */
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    // Laisser CORS ajouter les headers, puis répondre 204
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 /* ---------------- Middleware communs ---------------- */
 app.use(express.json({ limit: '1mb' }));
