@@ -488,8 +488,7 @@ app.get('/api/summary', auth, async (req,res)=>{
     // --- Calcul des Dettes et Crédits ACTUELS (Non filtrés par date) ---
     const q_current_balance = { owner: new mongoose.Types.ObjectId(req.user.uid) };
     
-    // Si isGlobal=true, ou si un client est spécifié, on applique le filtre de clientName.
-    // SINON (Dashboard "Tous les clients"), on prend tous les clients pour les dettes/crédits bruts.
+    // Si clientName est présent, on filtre. Si absent (mode "Tous les clients" du Dashboard ou Bilan Global), on ne filtre pas par client.
     if (clientName) q_current_balance.clientName = clientName; 
     
     // Total Dettes
