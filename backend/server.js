@@ -63,7 +63,8 @@ const saleSchema = new mongoose.Schema({
   unitPrice:   { type: Number, required: true, min: 0 },
   amount:      { type: Number, required: true, min: 0 }, // quantity * unitPrice
   payment:     { type: Number, default: 0, min: 0 },     // cumulé payé
-  balance:     { type: Number, required: true, min: 0 }, // max(amount - payment, 0)
+  // 🚨 MODIFICATION : balance peut être négatif (crédit client)
+  balance:     { type: Number, required: true },
   observation: { type: String, default: '' },
   settled:     { type: Boolean, default: false },
 }, { timestamps: true });
@@ -72,8 +73,12 @@ saleSchema.pre('validate', function(next){
   this.delivered = Math.max(0, Math.min(this.delivered || 0, this.quantity || 0));
   this.amount = (Number(this.quantity || 0) * Number(this.unitPrice || 0));
   const rawBalance = this.amount - Number(this.payment || 0);
-  this.balance = Math.max(0, Number(rawBalance.toFixed(2)));
-  this.settled = (this.amount > 0 && this.balance === 0);
+  
+  // 🚨 MODIFICATION : Enlever Math.max(0, ...) pour permettre les soldes négatifs (crédits)
+  this.balance = Number(rawBalance.toFixed(2));
+  
+  // 🚨 MODIFICATION : Settled si la balance est inférieure ou égale à zéro
+  this.settled = (this.amount > 0 && this.balance <= 0);
   next();
 });
 
@@ -152,8 +157,12 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid });
     if(!sale) return res.status(404).json({ error:'Vente introuvable' });
     const inc = Math.max(0, Number(amount||0));
-    const maxAdd = Math.max(0, sale.amount - sale.payment);
-    sale.payment += Math.min(inc, maxAdd);
+    
+    // 🚨 MODIFICATION : Ajouter le montant directement, même s'il dépasse le solde
+    sale.payment += inc;
+    
+    // L'ancienne logique de plafonnement (maxAdd) est supprimée
+    
     await sale.validate();
     await sale.save();
     res.json(sale);
@@ -165,10 +174,13 @@ app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
   try{
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid });
     if(!sale) return res.status(404).json({ error:'Vente introuvable' });
-    sale.payment = sale.amount;
-    await sale.validate();
-    sale.settled = true;
-    sale.balance = 0;
+    
+    // 🚨 MODIFICATION : Ajouter le montant exact qui manque pour atteindre le montant de la vente
+    sale.payment += Math.max(0, sale.amount - sale.payment);
+    
+    // L'ancienne logique (sale.payment = sale.amount) est remplacée
+    
+    await sale.validate(); // La validation va ajuster settled à true et balance à 0 (ou négatif si surplus)
     await sale.save();
     res.json(sale);
   }catch(e){ res.status(500).json({ error:e.message }); }
@@ -182,6 +194,7 @@ app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
     if(!sale) return res.status(404).json({ error:'Vente introuvable' });
     const inc = Math.max(0, Number(qty||0));
     const remaining = Math.max(0, sale.quantity - sale.delivered);
+    // Logique conservée car la livraison ne doit jamais dépasser la quantité commandée
     sale.delivered += Math.min(inc, remaining);
     await sale.validate();
     await sale.save();
@@ -189,7 +202,7 @@ app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
-// Dashboard dettes
+// Dashboard dettes clients (client doit à l'entreprise, balance > 0)
 app.get('/api/dashboard/debts', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
@@ -202,26 +215,21 @@ app.get('/api/dashboard/debts', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Sommaire
-// app.get('/api/summary', auth, async (req,res)=>{
-//   try{
-//     const [totals] = await Sale.aggregate([
-//       { $match: { owner: new mongoose.Types.ObjectId(req.user.uid) } },
-//       { $group: { _id:null, totalAmount:{ $sum:"$amount" }, totalPayment:{ $sum:"$payment" }, totalBalance:{ $sum:"$balance" } } }
-//     ]);
-//     const byFish = await Sale.aggregate([
-//       { $match: { owner: new mongoose.Types.ObjectId(req.user.uid) } },
-//       { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } },
-//       { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } }
-//     ]);
-//     res.json({
-//       totalAmount:Number((totals?.totalAmount||0).toFixed(2)),
-//       totalPayment:Number((totals?.totalPayment||0).toFixed(2)),
-//       totalBalance:Number((totals?.totalBalance||0).toFixed(2)),
-//       byFish
-//     });
-//   }catch(e){ res.status(500).json({ error:e.message }); }
-// });
+// 🚨 NOUVELLE ROUTE : Dashboard crédits clients (entreprise doit au client, balance < 0)
+app.get('/api/dashboard/credits', auth, async (req,res)=>{
+  try{
+    const agg = await Sale.aggregate([
+      { $match: { owner: new mongoose.Types.ObjectId(req.user.uid), balance: { $lt: 0 } } },
+      // Grouper et calculer le crédit total (somme des balances négatives)
+      { $group: { _id:"$clientName", totalCredit:{ $sum:"$balance" }, count:{ $sum:1 } } },
+      // Utiliser $abs pour afficher un montant positif représentant le crédit
+      { $project: { clientName:"$_id", totalCredit:{ $abs:"$totalCredit" }, count:1, _id:0 } }, 
+      { $sort: { totalCredit:-1 } }
+    ]);
+    res.json(agg);
+  }catch(e){ res.status(500).json({ error:e.message }); }
+});
+
 // Sommaire
 app.get('/api/summary', auth, async (req,res)=>{
   try{
@@ -235,13 +243,10 @@ app.get('/api/summary', auth, async (req,res)=>{
       { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } }
     ]);
 
-    // --- CORRECTION: Initialiser les totaux à zéro si l'agrégation est vide ---
     const defaultTotals = { totalAmount: 0, totalPayment: 0, totalBalance: 0 };
     const finalTotals = totals || defaultTotals;
-    // --- Fin Correction ---
 
     res.json({
-      // L'arrondi est appliqué avant l'envoi pour s'assurer que le front affiche des valeurs arrondies
       totalAmount: Number(finalTotals.totalAmount.toFixed(2)), 
       totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
       totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
@@ -250,7 +255,7 @@ app.get('/api/summary', auth, async (req,res)=>{
         amount: Number(f.amount.toFixed(2)),
         payment: Number(f.payment.toFixed(2)),
         balance: Number(f.balance.toFixed(2)),
-      })) // Arrondi aussi les totaux par poisson
+      }))
     });
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
