@@ -63,7 +63,7 @@ const saleSchema = new mongoose.Schema({
   unitPrice:   { type: Number, required: true, min: 0 },
   amount:      { type: Number, required: true, min: 0 }, // quantity * unitPrice
   payment:     { type: Number, default: 0, min: 0 },     // cumulé payé
-  // 🚨 MODIFICATION : balance peut être négatif (crédit client)
+  // MODIFIÉ : balance peut être négatif (crédit client)
   balance:     { type: Number, required: true },
   observation: { type: String, default: '' },
   settled:     { type: Boolean, default: false },
@@ -74,10 +74,10 @@ saleSchema.pre('validate', function(next){
   this.amount = (Number(this.quantity || 0) * Number(this.unitPrice || 0));
   const rawBalance = this.amount - Number(this.payment || 0);
   
-  // 🚨 MODIFICATION : Enlever Math.max(0, ...) pour permettre les soldes négatifs (crédits)
+  // MODIFIÉ : Autoriser balance négatif
   this.balance = Number(rawBalance.toFixed(2));
   
-  // 🚨 MODIFICATION : Settled si la balance est inférieure ou égale à zéro
+  // MODIFIÉ : Soldé si balance <= 0 (inclut le crédit)
   this.settled = (this.amount > 0 && this.balance <= 0);
   next();
 });
@@ -150,7 +150,7 @@ app.get('/api/sales', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Payer une partie
+// Payer une partie (autorise le surplus)
 app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
   try{
     const { amount } = req.body;
@@ -158,10 +158,8 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
     if(!sale) return res.status(404).json({ error:'Vente introuvable' });
     const inc = Math.max(0, Number(amount||0));
     
-    // 🚨 MODIFICATION : Ajouter le montant directement, même s'il dépasse le solde
+    // MODIFIÉ : Ajouter le montant directement (le modèle gère le crédit)
     sale.payment += inc;
-    
-    // L'ancienne logique de plafonnement (maxAdd) est supprimée
     
     await sale.validate();
     await sale.save();
@@ -169,18 +167,37 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
-// Solder tout
+// Rembourser une partie du crédit client
+app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
+  try{
+    const { amount } = req.body;
+    const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid });
+    if(!sale) return res.status(404).json({ error:'Vente introuvable' });
+    
+    const dec = Math.max(0, Number(amount||0));
+    
+    // Le montant remboursable est le surplus payé (crédit disponible)
+    const maxRefund = Math.max(0, sale.payment - sale.amount);
+    
+    // Diminuer le paiement total enregistré de la vente, plafonné au crédit max
+    sale.payment -= Math.min(dec, maxRefund);
+    
+    await sale.validate();
+    await sale.save();
+    res.json(sale);
+  }catch(e){ res.status(400).json({ error:e.message }); }
+});
+
+// Solder tout (paie l'exact manquant pour atteindre amount, sans surplus)
 app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
   try{
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid });
     if(!sale) return res.status(404).json({ error:'Vente introuvable' });
     
-    // 🚨 MODIFICATION : Ajouter le montant exact qui manque pour atteindre le montant de la vente
+    // MODIFIÉ : Ajouter le montant exact qui manque pour atteindre le montant de la vente
     sale.payment += Math.max(0, sale.amount - sale.payment);
     
-    // L'ancienne logique (sale.payment = sale.amount) est remplacée
-    
-    await sale.validate(); // La validation va ajuster settled à true et balance à 0 (ou négatif si surplus)
+    await sale.validate();
     await sale.save();
     res.json(sale);
   }catch(e){ res.status(500).json({ error:e.message }); }
@@ -194,7 +211,6 @@ app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
     if(!sale) return res.status(404).json({ error:'Vente introuvable' });
     const inc = Math.max(0, Number(qty||0));
     const remaining = Math.max(0, sale.quantity - sale.delivered);
-    // Logique conservée car la livraison ne doit jamais dépasser la quantité commandée
     sale.delivered += Math.min(inc, remaining);
     await sale.validate();
     await sale.save();
@@ -215,7 +231,7 @@ app.get('/api/dashboard/debts', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// 🚨 NOUVELLE ROUTE : Dashboard crédits clients (entreprise doit au client, balance < 0)
+// NOUVELLE ROUTE : Dashboard crédits clients (entreprise doit au client, balance < 0)
 app.get('/api/dashboard/credits', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
