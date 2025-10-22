@@ -1,5 +1,5 @@
-// server.js (version corrigée)
-require('dotenv').config(); // <= charge .env en premier
+// server.js
+require('dotenv').config(); // charge .env en premier
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -10,22 +10,35 @@ const ExcelJS = require('exceljs');
 const morgan = require('morgan');
 
 const app = express();
-app.use(cors());
+
+/* ---------------- CORS (préflight global) ---------------- */
+const corsOptions = {
+  origin: true, // en prod, remplace par l'URL de ton front: ex. 'https://ton-front.com'
+  methods: ['GET','POST','PATCH','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  credentials: true,
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // IMPORTANT: répond aux preflights sur toute route
+
+/* ---------------- Middleware communs ---------------- */
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('tiny'));
 
-// Valeurs par défaut sûres si .env manquant/incomplet
+/* ---------------- Env & connexion Mongo ---------------- */
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 const MONGO_URI  = process.env.MONGO_URI  || 'mongodb://localhost:27017/poisson';
 const DB_NAME    = process.env.DB_NAME    || 'poisson';
 const PORT       = Number(process.env.PORT) || 4000;
 
-// Connexion MongoDB — si l’URI n’a pas de nom de base, on force dbName
 mongoose.connect(MONGO_URI, { dbName: DB_NAME })
   .then(() => console.log(`MongoDB connected (db: ${DB_NAME})`))
   .catch(err => { console.error('MongoDB error:', err.message); process.exit(1); });
 
-// ======= MODELES =======
+/* ---------------- Health check (évite 404 sur "/") ---------------- */
+app.get('/', (_req, res) => res.type('text/plain').send('OK'));
+
+/* ---------------- Modèles ---------------- */
 const userSchema = new mongoose.Schema({
   companyName: { type: String, required: true },
   email:       { type: String, required: true, unique: true, index: true },
@@ -59,7 +72,7 @@ saleSchema.pre('validate', function(next){
 const User = mongoose.model('User', userSchema);
 const Sale = mongoose.model('Sale', saleSchema);
 
-// ======= AUTH MIDDLEWARE =======
+/* ---------------- Auth middleware ---------------- */
 function auth(req,res,next){
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ')? header.slice(7): null;
@@ -70,7 +83,7 @@ function auth(req,res,next){
   }catch(e){ return res.status(401).json({ error:'Token invalide' }); }
 }
 
-// ======= ROUTES AUTH =======
+/* ---------------- Routes AUTH ---------------- */
 app.post('/api/auth/register', async (req,res)=>{
   try{
     const { companyName, email, password } = req.body;
@@ -92,7 +105,8 @@ app.post('/api/auth/login', async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// ======= ROUTES VENTES =======
+/* ---------------- Routes VENTES ---------------- */
+// Créer une vente
 app.post('/api/sales', auth, async (req,res)=>{
   try{
     const { date, clientName, fishType, quantity, delivered=0, unitPrice, payment=0, observation='' } = req.body;
@@ -109,6 +123,7 @@ app.post('/api/sales', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
+// Lister ventes
 app.get('/api/sales', auth, async (req,res)=>{
   try{
     const { fishType, client, settled } = req.query;
@@ -122,6 +137,7 @@ app.get('/api/sales', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
+// Payer une partie
 app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
   try{
     const { amount } = req.body;
@@ -136,6 +152,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
+// Solder tout
 app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
   try{
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid });
@@ -149,6 +166,7 @@ app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
+// Livrer une quantité
 app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
   try{
     const { qty } = req.body;
@@ -163,6 +181,7 @@ app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
+// Dashboard dettes
 app.get('/api/dashboard/debts', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
@@ -175,6 +194,7 @@ app.get('/api/dashboard/debts', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
+// Sommaire
 app.get('/api/summary', auth, async (req,res)=>{
   try{
     const [totals] = await Sale.aggregate([
@@ -195,6 +215,7 @@ app.get('/api/summary', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
+// Export Excel
 app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   try{
     const sales = await Sale.find({ owner:req.user.uid }).sort({ date:-1, createdAt:-1 });
@@ -241,4 +262,5 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
+/* ---------------- Lancement ---------------- */
 app.listen(PORT, ()=>console.log(`API running on http://localhost:${PORT}`));
