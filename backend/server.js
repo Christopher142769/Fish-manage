@@ -164,7 +164,7 @@ app.get('/api/sales/client-balances/:clientName', auth, async (req, res) => {
     }
 });
 
-/* ---------------- Route ANALYSE CLIENT (NOUVELLE) ---------------- */
+/* ---------------- Route ANALYSE CLIENT (inchangée) ---------------- */
 
 // Route : Stats spécifiques à un client sur une période
 app.get('/api/client-analysis/:clientName', auth, async (req, res) => {
@@ -203,6 +203,7 @@ app.get('/api/client-analysis/:clientName', auth, async (req, res) => {
         ]);
 
         // 2. Dette totale actuelle (globale, pour la carte de statut)
+        // Note: Ici, on ne filtre PAS par date, seulement par client
         const debts = await Sale.aggregate([
             { $match: { 
                 owner: new mongoose.Types.ObjectId(req.user.uid),
@@ -214,6 +215,7 @@ app.get('/api/client-analysis/:clientName', auth, async (req, res) => {
         ]);
         
         // 3. Crédit total actuel (global, pour la carte de statut)
+        // Note: Ici, on ne filtre PAS par date, seulement par client
         const credits = await Sale.aggregate([
             { $match: { 
                 owner: new mongoose.Types.ObjectId(req.user.uid),
@@ -310,15 +312,30 @@ app.post('/api/sales', auth, async (req,res)=>{
   }
 });
 
-// Lister ventes (inchangé)
+// Lister ventes (MISE À JOUR pour le filtrage par date)
 app.get('/api/sales', auth, async (req,res)=>{
   try{
-    const { fishType, client, settled } = req.query;
+    const { fishType, client, settled, startDate, endDate } = req.query;
     const q = { owner: req.user.uid };
+    
     if (fishType) q.fishType = fishType;
     if (client) q.clientName = new RegExp(client, 'i');
     if (settled === 'true') q.settled = true;
     if (settled === 'false') q.settled = false;
+    
+    // FILTRAGE PAR PÉRIODE (pour le tableau de bord)
+    if (startDate || endDate) {
+        q.date = q.date || {};
+        if (startDate) {
+            q.date.$gte = new Date(startDate);
+        }
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setDate(end.getDate() + 1); // Ajouter un jour pour inclure la date de fin
+            q.date.$lt = end;
+        }
+    }
+    
     const sales = await Sale.find(q).sort({ date:-1, createdAt:-1 });
     res.json(sales);
   }catch(e){ res.status(500).json({ error:e.message }); }
@@ -432,7 +449,79 @@ app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
-/* ---------------- Routes DASHBOARD/EXPORT (inchangées) ---------------- */
+/* ---------------- Routes DASHBOARD/EXPORT (MISE À JOUR pour le filtrage) ---------------- */
+
+// Route de résumé général/filtré (utilisée pour le Dashboard et la nouvelle page Bilan)
+app.get('/api/summary', auth, async (req,res)=>{
+  try{
+    // isGlobal: force la vue totale, clientName/startDate/endDate: filtres de période
+    const { clientName, startDate, endDate, isGlobal } = req.query; 
+    const q = { owner: new mongoose.Types.ObjectId(req.user.uid) };
+
+    // FILTRAGE CONDITIONNEL pour les ventes agrégées (totals et byFish)
+    if (clientName) q.clientName = clientName;
+    if (startDate) {
+        q.date = { ...q.date, $gte: new Date(startDate) };
+    }
+    if (endDate) {
+        const end = new Date(endDate);
+        end.setDate(end.getDate() + 1); 
+        q.date = { ...q.date, $lt: end };
+    }
+    
+    // Total général ou filtré (basé sur q)
+    const [totals] = await Sale.aggregate([
+      { $match: q }, 
+      { $group: { _id:null, totalAmount:{ $sum:"$amount" }, totalPayment:{ $sum:"$payment" }, totalBalance:{ $sum:"$balance" } } }
+    ]);
+    
+    // Totaux par poisson (général ou filtré, basé sur q)
+    const byFish = await Sale.aggregate([
+      { $match: q }, 
+      { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } },
+      { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } }
+    ]);
+
+    const defaultTotals = { totalAmount: 0, totalPayment: 0, totalBalance: 0 };
+    const finalTotals = totals || defaultTotals;
+
+    // --- Calcul des Dettes et Crédits ACTUELS (Non filtrés par date) ---
+    // Si isGlobal=true, on prend TOUT. Sinon, on utilise le filtre clientName s'il existe.
+    const q_current_balance = { owner: new mongoose.Types.ObjectId(req.user.uid) };
+    if (isGlobal !== 'true' && clientName) q_current_balance.clientName = clientName; 
+
+    // Total Dettes
+    const [totalDebtResult] = await Sale.aggregate([
+        { $match: { ...q_current_balance, balance: { $gt: 0 } } },
+        { $group: { _id: null, totalDebt: { $sum: "$balance" } } },
+        { $project: { totalDebt: 1, _id: 0 } }
+    ]);
+
+    // Total Crédits
+    const [totalCreditResult] = await Sale.aggregate([
+        { $match: { ...q_current_balance, balance: { $lt: 0 } } },
+        { $group: { _id: null, totalCredit: { $sum: "$balance" } } },
+        { $project: { totalCredit: { $abs: "$totalCredit" }, _id: 0 } }
+    ]);
+
+    res.json({
+      totalAmount: Number(finalTotals.totalAmount.toFixed(2)), 
+      totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
+      totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
+      // Dettes/Crédits globaux si isGlobal=true, ou dettes/crédits ACTUELS du client sinon
+      totalDebt: (totalDebtResult && totalDebtResult.totalDebt) || 0,
+      totalCredit: (totalCreditResult && totalCreditResult.totalCredit) || 0,
+      byFish: byFish.map(f => ({
+        ...f,
+        amount: Number(f.amount.toFixed(2)),
+        payment: Number(f.payment.toFixed(2)),
+        balance: Number(f.balance.toFixed(2)),
+      }))
+    });
+  }catch(e){ console.error("Erreur summary:", e); res.status(500).json({ error:e.message }); }
+});
+
+// Les routes /api/dashboard/debts et /api/dashboard/credits restent GLOBALES
 app.get('/api/dashboard/debts', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
@@ -521,36 +610,6 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
-
-
-app.get('/api/summary', auth, async (req,res)=>{
-  try{
-    const [totals] = await Sale.aggregate([
-      { $match: { owner: new mongoose.Types.ObjectId(req.user.uid) } },
-      { $group: { _id:null, totalAmount:{ $sum:"$amount" }, totalPayment:{ $sum:"$payment" }, totalBalance:{ $sum:"$balance" } } }
-    ]);
-    const byFish = await Sale.aggregate([
-      { $match: { owner: new mongoose.Types.ObjectId(req.user.uid) } },
-      { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } },
-      { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } }
-    ]);
-
-    const defaultTotals = { totalAmount: 0, totalPayment: 0, totalBalance: 0 };
-    const finalTotals = totals || defaultTotals;
-
-    res.json({
-      totalAmount: Number(finalTotals.totalAmount.toFixed(2)), 
-      totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
-      totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
-      byFish: byFish.map(f => ({
-        ...f,
-        amount: Number(f.amount.toFixed(2)),
-        payment: Number(f.payment.toFixed(2)),
-        balance: Number(f.balance.toFixed(2)),
-      }))
-    });
-  }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
 app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
