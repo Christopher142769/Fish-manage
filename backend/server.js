@@ -203,6 +203,26 @@ app.get('/api/dashboard/debts', auth, async (req,res)=>{
 });
 
 // Sommaire
+// app.get('/api/summary', auth, async (req,res)=>{
+//   try{
+//     const [totals] = await Sale.aggregate([
+//       { $match: { owner: new mongoose.Types.ObjectId(req.user.uid) } },
+//       { $group: { _id:null, totalAmount:{ $sum:"$amount" }, totalPayment:{ $sum:"$payment" }, totalBalance:{ $sum:"$balance" } } }
+//     ]);
+//     const byFish = await Sale.aggregate([
+//       { $match: { owner: new mongoose.Types.ObjectId(req.user.uid) } },
+//       { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } },
+//       { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } }
+//     ]);
+//     res.json({
+//       totalAmount:Number((totals?.totalAmount||0).toFixed(2)),
+//       totalPayment:Number((totals?.totalPayment||0).toFixed(2)),
+//       totalBalance:Number((totals?.totalBalance||0).toFixed(2)),
+//       byFish
+//     });
+//   }catch(e){ res.status(500).json({ error:e.message }); }
+// });
+// Sommaire
 app.get('/api/summary', auth, async (req,res)=>{
   try{
     const [totals] = await Sale.aggregate([
@@ -214,15 +234,26 @@ app.get('/api/summary', auth, async (req,res)=>{
       { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } },
       { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } }
     ]);
+
+    // --- CORRECTION: Initialiser les totaux à zéro si l'agrégation est vide ---
+    const defaultTotals = { totalAmount: 0, totalPayment: 0, totalBalance: 0 };
+    const finalTotals = totals || defaultTotals;
+    // --- Fin Correction ---
+
     res.json({
-      totalAmount:Number((totals?.totalAmount||0).toFixed(2)),
-      totalPayment:Number((totals?.totalPayment||0).toFixed(2)),
-      totalBalance:Number((totals?.totalBalance||0).toFixed(2)),
-      byFish
+      // L'arrondi est appliqué avant l'envoi pour s'assurer que le front affiche des valeurs arrondies
+      totalAmount: Number(finalTotals.totalAmount.toFixed(2)), 
+      totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
+      totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
+      byFish: byFish.map(f => ({
+        ...f,
+        amount: Number(f.amount.toFixed(2)),
+        payment: Number(f.payment.toFixed(2)),
+        balance: Number(f.balance.toFixed(2)),
+      })) // Arrondi aussi les totaux par poisson
     });
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
-
 // Export Excel
 app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   try{
