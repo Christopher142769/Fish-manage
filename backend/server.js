@@ -166,46 +166,49 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
       // 1. Appliquer le paiement à la vente actuelle
       sale.payment += paymentAmount;
       await sale.validate();
-      await sale.save({ session }); // Enregistrement dans la transaction
+      await sale.save({ session });
       
-      // Calculer l'excédent (crédit) généré par ce paiement sur cette vente
       let surplus = Math.max(0, sale.payment - sale.amount);
       
-      // 2. Si un surplus existe, chercher les autres dettes du même client
+      // 2. Si un surplus existe, chercher les autres dettes du même client pour compensation
       if (surplus > 0) {
         
         // Trouver toutes les AUTRES ventes non soldées du MÊME client (balance > 0)
         const clientDebts = await Sale.find({ 
           owner: req.user.uid,
           clientName: sale.clientName,
-          _id: { $ne: sale._id }, // Exclure la vente actuelle
-          balance: { $gt: 0 } 
-        }).sort({ date: 1, createdAt: 1 }).session(session); // Compenser de la plus ancienne à la plus récente
+          _id: { $ne: sale._id }, 
+          // MODIFIÉ : On se base sur le statut settled: false pour trouver les dettes à compenser
+          settled: false 
+        }).sort({ date: 1, createdAt: 1 }).session(session);
         
         for (const debtSale of clientDebts) {
-          if (surplus <= 0) break; // Arrêter si le surplus est épuisé
+          if (surplus <= 0) break; 
           
-          const due = debtSale.balance; // Solde dû sur cette autre facture
-          const compensation = Math.min(surplus, due); // Compenser au maximum le dû ou le surplus restant
+          // Recalculer le solde dû pour cette dette
+          const due = Math.max(0, debtSale.amount - debtSale.payment); 
           
-          // Appliquer la compensation à la dette : augmenter le paiement
-          debtSale.payment += compensation;
-          await debtSale.validate();
-          await debtSale.save({ session }); // Enregistrement dans la transaction
-          
-          // Diminuer le surplus restant
-          surplus -= compensation;
+          if (due > 0) {
+              const compensation = Math.min(surplus, due);
+              
+              // Appliquer la compensation : augmenter le paiement
+              debtSale.payment += compensation;
+              await debtSale.validate(); // Recalculer balance et settled
+              await debtSale.save({ session }); 
+              
+              // Diminuer le surplus restant
+              surplus -= compensation;
+          }
         }
         
         // 3. Ajustement de la vente initiale si une partie du crédit a été utilisée
-        // L'excédent réel laissé sur la vente initiale est 'surplus'
         const initialCredit = sale.payment - sale.amount;
         const compensatedAmount = initialCredit - surplus;
 
         if (compensatedAmount > 0) {
             sale.payment -= compensatedAmount;
-            await sale.validate(); // Recalculer le solde de la vente initiale
-            await sale.save({ session }); // Enregistrement dans la transaction
+            await sale.validate(); 
+            await sale.save({ session }); 
         }
       }
     }
