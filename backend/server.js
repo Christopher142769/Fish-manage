@@ -1,4 +1,4 @@
-// server.js
+// server.js (inchangé)
 require('dotenv').config(); // charge .env en premier
 
 const express = require('express');
