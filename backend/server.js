@@ -1,5 +1,7 @@
-// server.js
-require('dotenv').config(); // charge .env en premier
+// server.js (CODE FINAL ET CORRIGÉ)
+
+// (Le code d'initialisation, schémas, et middlewares reste inchangé)
+require('dotenv').config(); 
 
 const express = require('express');
 const mongoose = require('mongoose');
@@ -11,29 +13,24 @@ const morgan = require('morgan');
 
 const app = express();
 
-/* ---------------- CORS (global) ---------------- */
 const corsOptions = {
-  origin: true, // en prod, mets l'URL de ton front (ex: 'https://ton-front.com')
+  origin: true, 
   methods: ['GET','POST','PATCH','PUT','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization'],
   credentials: true,
 };
 app.use(cors(corsOptions));
 
-/* --- Préflight universel (sans app.options('*', ...)) --- */
 app.use((req, res, next) => {
   if (req.method === 'OPTIONS') {
-    // Laisser CORS ajouter les headers, puis répondre 204
     return res.sendStatus(204);
   }
   next();
 });
 
-/* ---------------- Middleware communs ---------------- */
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('tiny'));
 
-/* ---------------- Env & connexion Mongo ---------------- */
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 const MONGO_URI  = process.env.MONGO_URI  || 'mongodb://localhost:27017/poisson';
 const DB_NAME    = process.env.DB_NAME    || 'poisson';
@@ -43,10 +40,9 @@ mongoose.connect(MONGO_URI, { dbName: DB_NAME })
   .then(() => console.log(`MongoDB connected (db: ${DB_NAME})`))
   .catch(err => { console.error('MongoDB error:', err.message); process.exit(1); });
 
-/* ---------------- Health check (évite 404 sur "/") ---------------- */
 app.get('/', (_req, res) => res.type('text/plain').send('OK'));
 
-/* ---------------- Modèles ---------------- */
+/* ---------------- Modèles (Inclut la gestion du solde négatif) ---------------- */
 const userSchema = new mongoose.Schema({
   companyName: { type: String, required: true },
   email:       { type: String, required: true, unique: true, index: true },
@@ -58,12 +54,11 @@ const saleSchema = new mongoose.Schema({
   date:        { type: Date, required: true },
   clientName:  { type: String, required: true, index: true },
   fishType:    { type: String, enum: ['tilapia', 'pangasius'], required: true, index: true },
-  quantity:    { type: Number, required: true, min: 0 }, // commandé
-  delivered:   { type: Number, default: 0, min: 0 },     // cumulé livré
+  quantity:    { type: Number, required: true, min: 0 }, 
+  delivered:   { type: Number, default: 0, min: 0 },     
   unitPrice:   { type: Number, required: true, min: 0 },
-  amount:      { type: Number, required: true, min: 0 }, // quantity * unitPrice
-  payment:     { type: Number, default: 0, min: 0 },     // cumulé payé
-  // MODIFIÉ : balance peut être négatif (crédit client)
+  amount:      { type: Number, required: true, min: 0 }, 
+  payment:     { type: Number, default: 0, min: 0 },     
   balance:     { type: Number, required: true },
   observation: { type: String, default: '' },
   settled:     { type: Boolean, default: false },
@@ -74,10 +69,7 @@ saleSchema.pre('validate', function(next){
   this.amount = (Number(this.quantity || 0) * Number(this.unitPrice || 0));
   const rawBalance = this.amount - Number(this.payment || 0);
   
-  // MODIFIÉ : Autoriser balance négatif
   this.balance = Number(rawBalance.toFixed(2));
-  
-  // MODIFIÉ : Soldé si balance <= 0 (inclut le crédit)
   this.settled = (this.amount > 0 && this.balance <= 0);
   next();
 });
@@ -96,7 +88,7 @@ function auth(req,res,next){
   }catch(e){ return res.status(401).json({ error:'Token invalide' }); }
 }
 
-/* ---------------- Routes AUTH ---------------- */
+/* ---------------- Routes AUTH (inchangées) ---------------- */
 app.post('/api/auth/register', async (req,res)=>{
   try{
     const { companyName, email, password } = req.body;
@@ -182,7 +174,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
             owner: req.user.uid,
             clientName: sale.clientName,
             _id: { $ne: sale._id }, 
-            settled: false // Les dettes non soldées
+            settled: false 
         }).sort({ date: 1, createdAt: 1 }).session(session);
         
         const initialSurplus = surplus;
