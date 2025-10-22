@@ -44,7 +44,7 @@ mongoose.connect(MONGO_URI, { dbName: DB_NAME })
 
 app.get('/', (_req, res) => res.type('text/plain').send('OK'));
 
-/* ---------------- Modèles (Inclut la gestion du solde négatif) ---------------- */
+/* ---------------- Modèles (inchangés) ---------------- */
 const userSchema = new mongoose.Schema({
   companyName: { type: String, required: true },
   email:       { type: String, required: true, unique: true, index: true },
@@ -72,118 +72,103 @@ saleSchema.pre('validate', function(next){
   const rawBalance = this.amount - Number(this.payment || 0);
   
   this.balance = Number(rawBalance.toFixed(2));
-  this.settled = (this.amount > 0 && this.balance <= 0); // Soldé si amount > 0 et balance <= 0
+  this.settled = (this.amount > 0 && this.balance <= 0); 
   next();
 });
 
 const User = mongoose.model('User', userSchema);
 const Sale = mongoose.model('Sale', saleSchema);
 
-/* ---------------- Compensation Globale (CORRIGÉE) ---------------- */
+/* ---------------- Compensation MANUELLE (NOUVEAU) ---------------- */
 
 /**
- * Tente de compenser toutes les dettes non soldées d'un client 
- * en utilisant l'excédent de paiement (crédit) disponible sur ses ventes.
- * @param {string} clientName - Nom du client.
+ * Tente de compenser une seule dette par un crédit spécifique.
+ * Met à jour les deux ventes (dette et crédit) et renvoie le montant de la compensation.
+ * @param {mongoose.Types.ObjectId} debtId - ID de la vente (dette).
+ * @param {mongoose.Types.ObjectId} creditId - ID de la vente (crédit).
+ * @param {number} amountToUse - Montant du crédit à appliquer à la dette.
  * @param {mongoose.Types.ObjectId} ownerId - ID du propriétaire.
  * @param {mongoose.ClientSession} session - Session de transaction.
- * @returns {number} Le crédit net total (négatif) restant après compensation.
  */
-async function compensateClientDebts(clientName, ownerId, session) {
-    // 1. Trouver toutes les ventes (dettes & crédits) du client
-    let allSales = await Sale.find({ 
-        owner: ownerId,
-        clientName: clientName, 
-    }).sort({ date: 1, createdAt: 1 }).session(session); // Tri par ancienneté
+async function applyCompensation(debtId, creditId, amountToUse, ownerId, session) {
+    const amount = Number(amountToUse);
+    if (amount <= 0) throw new Error("Montant de compensation invalide.");
 
-    // Dettes (balance > 0) par ancienneté (date)
-    let debtsToSettle = allSales
-        .filter(s => s.balance > 0)
-        .sort((a, b) => new Date(a.date) - new Date(b.date) || a.createdAt - b.createdAt); 
+    // Balance > 0 (Dette) ; Balance < 0 (Crédit)
+    const debtSale = await Sale.findOne({ _id: debtId, owner: ownerId, balance: { $gt: 0 } }).session(session);
+    const creditSale = await Sale.findOne({ _id: creditId, owner: ownerId, balance: { $lt: 0 } }).session(session);
 
-    // Crédits (balance < 0) par ancienneté (date)
-    let creditSales = allSales
-        .filter(s => s.balance < 0)
-        .sort((a, b) => new Date(a.date) - new Date(b.date) || a.createdAt - b.createdAt); 
-        
-    let totalCreditAvailable = creditSales.reduce((sum, s) => sum + Math.abs(s.balance), 0);
-    let remainingCredit = totalCreditAvailable;
-    let saves = []; // Tableau pour stocker les promesses de sauvegarde
+    if (!debtSale || !creditSale) throw new Error("Vente(s) introuvable(s) ou solde(s) incompatible(s).");
     
-    // Déterminer combien de crédit est UTILISÉ
-    let creditUsedTotal = 0;
+    const maxDebtPayment = debtSale.balance;
+    const maxCreditUse = Math.abs(creditSale.balance);
     
-    // 2. Tenter de solder les dettes avec le crédit disponible (du plus ancien au plus récent)
-    for (const debtSale of debtsToSettle) {
-        if (remainingCredit <= 0) break;
-        
-        const due = debtSale.balance; // Balance de la dette (positive)
-        if (due <= 0) continue; 
-        
-        const compensation = Math.min(remainingCredit, due);
-        
-        // Augmenter le paiement de la dette pour la solder
-        debtSale.payment += compensation; 
-        
-        // Marquer pour sauvegarde (save() appliquera pre('validate'))
-        saves.push(debtSale.save({ session })); 
-        
-        remainingCredit -= compensation;
-        creditUsedTotal += compensation;
-    }
+    // Le montant réel de la compensation est le minimum des trois valeurs (montant demandé, dette restante, crédit disponible)
+    const actualAmount = Math.min(amount, maxDebtPayment, maxCreditUse);
 
-    // 3. Ajuster les lignes de crédit originales (celles utilisées)
-    let compensationLeftToDistribute = creditUsedTotal;
+    if (actualAmount <= 0) throw new Error("Aucune compensation possible avec ce montant.");
 
-    // Diminuer le paiement des lignes de crédit utilisées
-    for (const creditSale of creditSales) {
-        if (compensationLeftToDistribute <= 0) break;
-        
-        // Le crédit disponible sur cette ligne (valeur absolue)
-        const availableCredit = Math.abs(creditSale.balance);
-        
-        // Le montant à retirer de ce crédit
-        const amountToApply = Math.min(compensationLeftToDistribute, availableCredit);
-        
-        // Diminuer le paiement du montant utilisé pour réduire le crédit (balance doit se rapprocher de 0)
-        creditSale.payment -= amountToApply; 
-        
-        // Marquer pour sauvegarde
-        saves.push(creditSale.save({ session })); 
-        
-        compensationLeftToDistribute -= amountToApply;
-    }
-
-    // Exécuter toutes les sauvegardes en parallèle dans la transaction
-    await Promise.all(saves);
+    // 1. Appliquer le paiement à la dette (augmente le 'payment' de la dette)
+    debtSale.payment += actualAmount;
+    await debtSale.validate(); // Met à jour le solde et le statut 'settled'
     
-    // 4. Calculer le nouveau crédit net après compensation
-    const newCredit = await Sale.aggregate([
-      { $match: { owner: ownerId, clientName: clientName, balance: { $lt: 0 } } },
-      { $group: { _id: null, totalCredit: { $sum: "$balance" } } }
-    ]).session(session);
+    // 2. Réduire le paiement du crédit (diminue le 'payment' du crédit)
+    creditSale.payment -= actualAmount;
+    await creditSale.validate(); // Met à jour le solde et le statut 'settled'
 
-    return newCredit.length > 0 ? newCredit[0].totalCredit : 0;
+    await Promise.all([debtSale.save({ session }), creditSale.save({ session })]);
+    
+    return actualAmount;
 }
 
-// ROUTE : Compensation Globale (pour le front-end)
-app.patch('/api/sales/compensate-client/:clientName', auth, async (req, res) => {
+// ROUTE : Compensation Manuelle (pour le front-end)
+app.patch('/api/sales/compensate-manual', auth, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
-        const clientName = req.params.clientName;
-        await compensateClientDebts(clientName, req.user.uid, session);
+        const { debtId, creditId, amountToUse } = req.body;
+        const compensatedAmount = await applyCompensation(debtId, creditId, amountToUse, req.user.uid, session);
         await session.commitTransaction();
-        res.json({ clientName, message: "Compensation effectuée" });
+        res.json({ message: "Compensation effectuée", compensatedAmount });
     } catch(e) {
         await session.abortTransaction();
-        console.error("Erreur de compensation:", e);
-        res.status(500).json({ error: e.message });
+        console.error("Erreur de compensation manuelle:", e);
+        res.status(400).json({ error: e.message });
     } finally {
         session.endSession();
     }
 });
 
+// ROUTE : Lister les dettes et crédits non soldés d'un client
+app.get('/api/sales/client-balances/:clientName', auth, async (req, res) => {
+    try {
+        const clientName = req.params.clientName;
+        // On cherche toutes les ventes avec un solde non nul
+        const sales = await Sale.find({ 
+            owner: req.user.uid, 
+            clientName: clientName, 
+            balance: { $ne: 0 } 
+        }).select('date balance settled amount payment fishType'); 
+        
+        const debts = sales.filter(s => s.balance > 0).map(s => ({
+            _id: s._id,
+            date: s.date.toISOString().slice(0, 10),
+            balance: s.balance, // Montant restant dû (dette)
+            isCredit: false
+        })).sort((a, b) => new Date(a.date) - new Date(b.date)); // Du plus ancien au plus récent
+
+        const credits = sales.filter(s => s.balance < 0).map(s => ({
+            _id: s._id,
+            date: s.date.toISOString().slice(0, 10),
+            balance: Math.abs(s.balance), // Crédit en valeur positive
+            isCredit: true
+        })).sort((a, b) => new Date(a.date) - new Date(b.date)); 
+
+        res.json({ debts, credits });
+    } catch(e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 /* ---------------- Auth middleware ---------------- */
 function auth(req,res,next){
@@ -218,15 +203,14 @@ app.post('/api/auth/login', async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-/* ---------------- Routes VENTES ---------------- */
-// Créer une vente (CORRECTION MAJEURE: Ajout transaction + compensation immédiate)
+/* ---------------- Routes VENTES (SUPPRESSION COMPENSATION AUTOMATIQUE) ---------------- */
+// Créer une vente
 app.post('/api/sales', auth, async (req,res)=>{
   const session = await mongoose.startSession();
   session.startTransaction();
   try{
     const { date, clientName, fishType, quantity, delivered=0, unitPrice, payment=0, observation='' } = req.body;
     
-    // Création en tableau pour utiliser la session, et on récupère le premier (et seul) élément créé.
     const [newSale] = await Sale.create([{ 
       owner: req.user.uid,
       date: date ? new Date(date) : new Date(),
@@ -237,14 +221,10 @@ app.post('/api/sales', auth, async (req,res)=>{
       observation
     }], { session }); 
     
-    // Déclenchement de la compensation globale pour le client (si nouveau crédit/dette)
-    await compensateClientDebts(clientName, req.user.uid, session);
+    // ❌ Suppression de l'appel à compensateClientDebts
     
     await session.commitTransaction();
-    
-    // Recharger la vente (maintenant que la compensation a eu lieu) pour renvoyer le dernier état
-    const updatedSale = await Sale.findById(newSale._id);
-    res.json(updatedSale); 
+    res.json(newSale); // On renvoie la vente telle qu'elle a été créée (avec la dette ou le crédit)
   }catch(e){ 
     await session.abortTransaction();
     res.status(400).json({ error:e.message }); 
@@ -267,7 +247,7 @@ app.get('/api/sales', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Payer une partie (CORRIGÉ: Utilise la nouvelle compensation)
+// Payer une partie
 app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -275,28 +255,22 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
     const { amount } = req.body;
     const paymentAmount = Math.max(0, Number(amount||0));
 
-    // 1. Trouver la vente initiale
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid }).session(session);
     if(!sale) { await session.abortTransaction(); return res.status(404).json({ error:'Vente introuvable' }); }
     
-    // Si aucun montant n'est fourni, ne rien faire
     if (paymentAmount === 0) {
         await session.commitTransaction();
         return res.json(sale);
     }
     
-    // Augmenter le paiement de la vente initiale
     sale.payment += paymentAmount;
     await sale.validate();
     
-    // Sauvegarde de l'état de la vente (potentiellement avec le nouveau crédit)
     await sale.save({ session }); 
 
-    // Déclenchement de la compensation globale
-    await compensateClientDebts(sale.clientName, req.user.uid, session);
+    // ❌ Suppression de l'appel à compensateClientDebts
     
     await session.commitTransaction();
-    // Recharger la vente initiale pour s'assurer que le dernier état est renvoyé
     const updatedSale = await Sale.findById(sale._id);
     res.json(updatedSale);
   }catch(e){ 
@@ -308,7 +282,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
 });
 
 
-// Rembourser une partie du crédit client (CORRIGÉ: Utilise la nouvelle compensation)
+// Rembourser une partie du crédit client
 app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -319,21 +293,17 @@ app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
     
     const dec = Math.max(0, Number(amount||0));
     
-    // Le montant remboursable est le surplus payé (crédit disponible)
-    const maxRefund = Math.abs(sale.balance); // Utiliser Math.abs(sale.balance) pour le crédit disponible
+    const maxRefund = Math.abs(sale.balance); 
     
-    // Diminuer le paiement total enregistré de la vente, plafonné au crédit max
     sale.payment -= Math.min(dec, maxRefund);
     
     await sale.validate();
     await sale.save({ session });
     
-    // Appel à la compensation après ajustement du crédit
-    await compensateClientDebts(sale.clientName, req.user.uid, session);
+    // ❌ Suppression de l'appel à compensateClientDebts
 
     await session.commitTransaction();
     
-    // Recharger pour renvoyer le dernier état
     const updatedSale = await Sale.findById(sale._id); 
     res.json(updatedSale);
   }catch(e){ 
@@ -344,7 +314,7 @@ app.patch('/api/sales/:id/refund', auth, async (req,res)=>{
   }
 });
 
-// Solder tout (CORRIGÉ: Utilise la nouvelle compensation)
+// Solder tout
 app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -352,18 +322,15 @@ app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
     const sale = await Sale.findOne({ _id:req.params.id, owner:req.user.uid }).session(session);
     if(!sale) { await session.abortTransaction(); return res.status(404).json({ error:'Vente introuvable' }); }
     
-    // Ajouter le montant exact qui manque pour atteindre amount, sans surplus
     sale.payment += Math.max(0, sale.amount - sale.payment);
     
     await sale.validate();
     await sale.save({ session });
 
-    // Appel à la compensation après règlement
-    await compensateClientDebts(sale.clientName, req.user.uid, session);
+    // ❌ Suppression de l'appel à compensateClientDebts
     
     await session.commitTransaction();
     
-    // Recharger pour renvoyer le dernier état
     const updatedSale = await Sale.findById(sale._id); 
     res.json(updatedSale);
   }catch(e){ 
@@ -389,7 +356,7 @@ app.patch('/api/sales/:id/deliver', auth, async (req,res)=>{
   }catch(e){ res.status(400).json({ error:e.message }); }
 });
 
-// Dashboard dettes clients (inchangé)
+/* ---------------- Routes DASHBOARD/EXPORT (inchangées) ---------------- */
 app.get('/api/dashboard/debts', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
@@ -402,13 +369,11 @@ app.get('/api/dashboard/debts', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Dashboard crédits clients (inchangé)
 app.get('/api/dashboard/credits', auth, async (req,res)=>{
   try{
     const agg = await Sale.aggregate([
       { $match: { owner: new mongoose.Types.ObjectId(req.user.uid), balance: { $lt: 0 } } },
       { $group: { _id:"$clientName", totalCredit:{ $sum:"$balance" }, count:{ $sum:1 } } },
-      // Note: totalCredit est négatif, Math.abs est appliqué par $abs
       { $project: { clientName:"$_id", totalCredit:{ $abs:"$totalCredit" }, count:1, _id:0 } }, 
       { $sort: { totalCredit:-1 } }
     ]);
@@ -416,7 +381,6 @@ app.get('/api/dashboard/credits', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// NOUVELLE ROUTE : Liste de tous les clients pour le bilan (inchangé)
 app.get('/api/clients', auth, async (req, res) => {
   try {
     const clients = await Sale.distinct('clientName', { owner: req.user.uid });
@@ -427,7 +391,6 @@ app.get('/api/clients', auth, async (req, res) => {
 });
 
 
-// NOUVELLE ROUTE : Export Excel du bilan client (ou de tous) (inchangé)
 app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
   try {
     const { clientName } = req.query;
@@ -485,7 +448,6 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
 });
 
 
-// Sommaire (inchangé)
 app.get('/api/summary', auth, async (req,res)=>{
   try{
     const [totals] = await Sale.aggregate([
@@ -515,7 +477,6 @@ app.get('/api/summary', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// Export Excel général (inchangé)
 app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   try{
     const sales = await Sale.find({ owner:req.user.uid }).sort({ date:-1, createdAt:-1 });
