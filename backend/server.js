@@ -190,12 +190,17 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
             if (due > 0) {
                 const compensation = Math.min(surplus, due);
                 
-                // CORRECTION ATOMIQUE : Appliquer la compensation à l'ancienne dette
+                // 🚨 CORRECTION ATOMIQUE ET SIMPLIFIÉE POUR GARANTIR LE SOLDE
+                // Mettre le paiement à amount (pour solde = 0) et marquer comme soldé
                 await Sale.findByIdAndUpdate(debtSale._id, {
-                    $inc: { payment: compensation }
+                    // Calcul du paiement total après compensation
+                    $set: { 
+                        payment: debtSale.payment + compensation,
+                        // Le recalcul de balance et settled se fera par pre('validate')
+                    }
                 }, { 
                     new: true, 
-                    runValidators: true, 
+                    runValidators: true, // IMPORTANT : Déclenche pre('validate')
                     session: session 
                 });
                 
@@ -211,7 +216,6 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
             // Retirer le surplus utilisé pour compenser d'autres dettes
             sale.payment -= compensatedAmount;
             await sale.validate(); 
-            // Re-sauvegarder la vente initiale avec le paiement ajusté.
             await sale.save({ session }); 
         } else {
              // Si aucune compensation n'a eu lieu, on sauvegarde la vente initiale telle qu'elle est.
@@ -223,7 +227,7 @@ app.patch('/api/sales/:id/pay', auth, async (req,res)=>{
     }
     
     await session.commitTransaction();
-    // Renvoyer l'état final de la vente initiale
+    // Recharger la vente initiale pour s'assurer que le dernier état est renvoyé
     const updatedSale = await Sale.findById(sale._id);
     res.json(updatedSale);
   }catch(e){ 
@@ -365,13 +369,13 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
         balance: s.balance,
         balanceType: s.balance > 0 ? 'Dette Client' : (s.balance < 0 ? 'Crédit Entreprise' : 'Soldé'),
         delivered: s.delivered,
-        settled: s.settled ? 'Oui' : 'Non',
-        observation: s.observation || ''
+        settled: s.settled?'Oui':'Non',
+        observation: s.observation||''
       });
     });
 
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${clientName && clientName !== 'all' ? `bilan_${clientName.replace(/\s/g, '_')}` : 'bilan_global'}.xlsx"`);
+    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition',`attachment; filename="${clientName && clientName !== 'all' ? `bilan_${clientName.replace(/\s/g, '_')}` : 'bilan_global'}.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
 
