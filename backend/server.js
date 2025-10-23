@@ -278,24 +278,64 @@ app.get('/api/admin/sales-for-user/:userId', authSuperAdmin, async (req, res) =>
     }
 });
 
-app.get('/api/admin/logs-for-user/:userId', authSuperAdmin, async (req, res) => {
-    try {
-        const { startDate, endDate } = req.query;
-        const q = { owner: req.params.userId };
+// app.get('/api/admin/logs-for-user/:userId', authSuperAdmin, async (req, res) => {
+//     try {
+//         const { startDate, endDate } = req.query;
+//         const q = { owner: req.params.userId };
         
-        if (startDate || endDate) {
-            q.createdAt = q.createdAt || {}; // Filtrer sur la date de l'action
-            if (startDate) q.createdAt.$gte = new Date(startDate);
-            if (endDate) {
-                const end = new Date(endDate); end.setDate(end.getDate() + 1); 
-                q.createdAt.$lt = end;
-            }
-        }
-        const logs = await ActionLog.find(q).sort({ createdAt: -1 });
-        res.json(logs);
-    } catch(e) {
-        res.status(500).json({ error: e.message });
-    }
+//         if (startDate || endDate) {
+//             q.createdAt = q.createdAt || {}; // Filtrer sur la date de l'action
+//             if (startDate) q.createdAt.$gte = new Date(startDate);
+//             if (endDate) {
+//                 const end = new Date(endDate); end.setDate(end.getDate() + 1); 
+//                 q.createdAt.$lt = end;
+//             }
+//         }
+//         const logs = await ActionLog.find(q).sort({ createdAt: -1 });
+//         res.json(logs);
+//     } catch(e) {
+//         res.status(500).json({ error: e.message });
+//     }
+// });
+// Route CORRIGÉE
+app.get('/api/admin/logs-for-user/:userId', authSuperAdmin, async (req, res) => {
+  try {
+      const { startDate, endDate } = req.query;
+      const ownerId = req.params.userId;
+
+      // 1. Récupérer TOUS les logs pour cet utilisateur
+      let logs = await ActionLog.find({ owner: ownerId }).sort({ createdAt: -1 });
+
+      // 2. Filtrer les logs en fonction de la date de la VENTE associée (saleData.date)
+      if (startDate || endDate) {
+          const start = startDate ? new Date(startDate) : null;
+          // Pour endDate, on prend le début du jour suivant pour inclure toute la journée de fin
+          const end = endDate ? new Date(endDate) : null;
+          if (end) { end.setDate(end.getDate() + 1); }
+
+          logs = logs.filter(log => {
+              // Vérifier si saleData et saleData.date existent
+              if (!log.saleData || !log.saleData.date) {
+                  return false; // Ignorer les logs sans date de vente valide
+              }
+              try {
+                  const saleDate = new Date(log.saleData.date);
+                  const matchStart = start ? saleDate >= start : true;
+                  const matchEnd = end ? saleDate < end : true;
+                  return matchStart && matchEnd;
+              } catch (e) {
+                  // En cas d'erreur de parsing de date, ignorer ce log
+                  console.error(`Error parsing saleData.date for log ${log._id}:`, log.saleData.date, e);
+                  return false;
+              }
+          });
+      }
+
+      res.json(logs);
+  } catch(e) {
+      console.error("Error fetching admin logs:", e); // Ajout d'un log d'erreur plus détaillé
+      res.status(500).json({ error: e.message });
+  }
 });
 
 // NOUVEAU: Export Excel Super Admin
