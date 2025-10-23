@@ -1,4 +1,4 @@
-// App.js (MIS À JOUR)
+// App.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** =====================================
@@ -9,23 +9,6 @@ const SIDEBAR_WIDTH = 250; // px
 
 /** Helpers */
 const money = (n) => (n ?? 0).toLocaleString("fr-FR", { style: "currency", currency: "XOF" });
-// NOUVEAU: Helper de date
-const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    try {
-        return new Date(dateString).toISOString().slice(0, 10);
-    } catch (e) {
-        return dateString;
-    }
-}
-const formatDateTime = (dateString) => {
-    if (!dateString) return 'N/A';
-    try {
-        return new Date(dateString).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-    } catch (e) {
-        return dateString;
-    }
-}
 
 function apiFetch(path, options = {}) {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -34,7 +17,9 @@ function apiFetch(path, options = {}) {
   return fetch(`${API_BASE}${path}`, { ...options, headers });
 }
 
+// 🚨 FONCTION pour valider le nom de client (MAJUSCULES SANS ESPACE)
 const validateClientName = (name) => {
+    // N'autorise que les lettres majuscules (A-Z) et les chiffres (0-9)
     return /^[A-Z0-9]+$/.test(name);
 }
 
@@ -83,24 +68,8 @@ function useChartJs() {
   return ready;
 }
 
-function useClients() {
-    const [clients, setClients] = useState([]);
-    useEffect(() => {
-        (async () => {
-            try {
-                const res = await apiFetch("/api/clients");
-                const data = await res.json();
-                setClients(Array.isArray(data) ? data.sort() : []);
-            } catch (e) {
-                console.error("Erreur chargement clients:", e);
-            }
-        })();
-    }, []);
-    return clients;
-}
-
 /** =====================================
- * SIDEBAR + NAVBAR (MIS À JOUR)
+ * SIDEBAR + NAVBAR
  * ===================================== */
 function Sidebar({ companyName, currentPage, onNavigate, onLogout, open, setOpen, isMdUp }) {
   const navItems = [
@@ -109,12 +78,8 @@ function Sidebar({ companyName, currentPage, onNavigate, onLogout, open, setOpen
     { id: "new-sale", icon: "bi-cash-coin", label: "Nouvelle Vente" },
     { id: "sales", icon: "bi-table", label: "Historique & Actions" },
     { id: "debts", icon: "bi-exclamation-triangle-fill", label: "Dettes Clients" },
-    { id: "sales-balance", icon: "bi-cash-stack", label: "Bilan des Ventes" }, 
     { id: "client-report", icon: "bi-file-earmark-bar-graph-fill", label: "Bilan Client / Export" }, 
     { id: "charts", icon: "bi-graph-up", label: "Analyse Graphique" },
-    // NOUVEAUX VOLETS
-    { id: "motif-summary", icon: "bi-journal-text", label: "Bilan Motifs" },
-    { id: "action-history", icon: "bi-trash-fill", label: "Historiques Actions" },
   ];
 
   return (
@@ -136,7 +101,6 @@ function Sidebar({ companyName, currentPage, onNavigate, onLogout, open, setOpen
           zIndex: 1030, 
           transition: "transform .25s ease",
           transform: !isMdUp && !open ? `translateX(-${SIDEBAR_WIDTH}px)` : "translateX(0)",
-          overflowY: "auto" // Ajout pour permettre le scroll si bcp d'items
         }}
       >
         <button
@@ -268,6 +232,9 @@ function AuthView({ onAuth }) {
                 </form>
               </div>
             </div>
+            <div className="text-center text-muted mt-3 small">
+              {/* Backend: <code>{API_BASE}</code> */}
+            </div>
           </div>
         </div>
       </div>
@@ -276,41 +243,11 @@ function AuthView({ onAuth }) {
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------------------
-// Composant : Corps de formulaire de vente réutilisable (MODIFIÉ pour inclure Date/Client)
+// Composant : Corps de formulaire de vente réutilisable (inchangé)
 // ----------------------------------------------------------------------------------------------------------------------------------------------------------
-function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
+function SaleFormBody({ data, setData, disabled = false }) {
     return (
         <div className="row g-3">
-            {/* Ajout des champs Date et Client pour la modale d'édition */}
-            {isEdit && (
-                <>
-                    <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">Client (MAJUSCULES SANS ESPACE)</label>
-                        <input 
-                            className="form-control" 
-                            value={data.clientName} 
-                            onChange={(e) => setData(p => ({...p, clientName: e.target.value.toUpperCase().replace(/\s/g, '')}))}
-                            pattern="^[A-Z0-9]+$"
-                            title="Uniquement des lettres majuscules (A-Z) et des chiffres (0-9)."
-                            required 
-                            disabled={disabled}
-                        />
-                    </div>
-                    <div className="col-12 col-md-6">
-                        <label className="form-label small fw-semibold">Date</label>
-                        <input 
-                            type="date" 
-                            className="form-control" 
-                            value={data.date} 
-                            onChange={(e) => setData(p => ({...p, date: e.target.value}))} 
-                            required 
-                            disabled={disabled}
-                        />
-                    </div>
-                    <div className="col-12"><hr/></div>
-                </>
-            )}
-            
             <div className="col-6">
                 <label className="form-label small fw-semibold">Poisson</label>
                 <select 
@@ -369,7 +306,7 @@ function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
                     disabled={disabled}
                 />
             </div>
-            <div className="col-6"> 
+            <div className="col-12">
                 <label className="form-label small fw-semibold">Observation</label>
                 <input 
                     className="form-control" 
@@ -384,7 +321,7 @@ function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
 }
 
 /** =====================================
- * SALE FORM (inchangé)
+ * SALE FORM
  * ===================================== */
 function SaleForm({ onSaved }) {
     const [formData, setFormData] = useState({
@@ -408,6 +345,7 @@ function SaleForm({ onSaved }) {
         setLoading(true);
 
         try {
+            // VALIDATION DU NOM DE CLIENT
             const clientUpper = clientName.toUpperCase();
             if (!validateClientName(clientUpper)) {
                 throw new Error("Le nom du client doit être en MAJUSCULES (A-Z, 0-9) sans espace/caractère spécial. Ex: ENTREPRISEA1");
@@ -422,7 +360,7 @@ function SaleForm({ onSaved }) {
             const res = await apiFetch("/api/sales", {
                 method: "POST",
                 body: JSON.stringify({
-                    date, clientName: clientUpper, 
+                    date, clientName: clientUpper, // Utilisation de la version en majuscules
                     fishType: formData.fishType,
                     quantity: q, delivered: Number(formData.delivered || 0),
                     unitPrice: u, payment: Number(formData.payment || 0),
@@ -432,6 +370,7 @@ function SaleForm({ onSaved }) {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Erreur");
             
+            // Réinitialisation après succès
             setClient(""); 
             setFormData({fishType: 'tilapia', quantity: '', delivered: '', unitPrice: '', payment: '', observation: ''});
             
@@ -454,8 +393,8 @@ function SaleForm({ onSaved }) {
                         <input 
                             className="form-control" 
                             value={clientName} 
-                            onChange={(e) => setClient(e.target.value.toUpperCase().replace(/\s/g, ''))} 
-                            pattern="^[A-Z0-9]+$" 
+                            onChange={(e) => setClient(e.target.value.toUpperCase().replace(/\s/g, ''))} // Conversion et suppression des espaces en direct
+                            pattern="^[A-Z0-9]+$" // Validation HTML5 visuelle
                             title="Uniquement des lettres majuscules (A-Z) et des chiffres (0-9). Pas d'espaces."
                             required 
                         />
@@ -467,7 +406,7 @@ function SaleForm({ onSaved }) {
                     </div>
                     
                     <div className="col-12">
-                       <SaleFormBody data={formData} setData={setFormData} isEdit={false} />
+                       <SaleFormBody data={formData} setData={setFormData} />
                     </div>
 
                     <div className="col-12 d-grid gap-2 mt-4">
@@ -491,18 +430,22 @@ function SaleForm({ onSaved }) {
 }
 
 // ----------------------------------------------------------------------------------------------------------------------------------------------------------
-// Composant MODAL et Compensation Manuelle (inchangés)
+// Composant MODAL pour gérer l'utilisation du crédit (Compensation manuelle)
 // ----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// Composant de Compensation Manuelle
 function ManualCompensationForm({ creditSale, creditAvailable, setLoading, onCompensationSuccess }) {
     const [debts, setDebts] = useState([]);
     const [selectedDebt, setSelectedDebt] = useState(null);
     const [amountToCompensate, setAmountToCompensate] = useState(creditAvailable.toFixed(2));
     const [clientLoading, setClientLoading] = useState(false);
     
+    // Charger les dettes existantes du client
     useEffect(() => {
         const loadDebts = async () => {
             setClientLoading(true);
             try {
+                // Nouvelle route backend pour obtenir les dettes
                 const res = await apiFetch(`/api/sales/client-balances/${encodeURIComponent(creditSale.clientName)}`);
                 const data = await res.json();
                 const validDebts = data.debts.filter(d => d.balance > 0); 
@@ -513,7 +456,7 @@ function ManualCompensationForm({ creditSale, creditAvailable, setLoading, onCom
                     setSelectedDebt(null);
                 }
             } catch (e) {
-                console.error("Erreur chargement des dettes:", e);
+                console.error("Erreur de chargement des dettes:", e);
                 alert("Erreur lors du chargement des dettes: " + e.message);
             } finally {
                 setClientLoading(false);
@@ -543,6 +486,7 @@ function ManualCompensationForm({ creditSale, creditAvailable, setLoading, onCom
             const max = Math.min(creditAvailable, selectedDebt.balance);
             if (amount > max) throw new Error(`Le montant ne peut pas dépasser ${money(max)} (Max entre crédit et dette).`);
 
+            // Nouvelle route de compensation manuelle
             const res = await apiFetch(`/api/sales/compensate-manual`, { 
                 method: "PATCH", 
                 body: JSON.stringify({ 
@@ -626,11 +570,13 @@ function ManualCompensationForm({ creditSale, creditAvailable, setLoading, onCom
     );
 }
 
+
 function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onManualCompensationSuccess }) {
     const [useType, setUseType] = useState('refund'); 
     const [amount, setAmount] = useState(Math.abs(sale.balance).toFixed(2));
     const [loading, setLoading] = useState(false);
     
+    // Pour l'onglet "Nouvelle Vente"
     const [newSaleFormData, setNewSaleFormData] = useState({
         fishType: 'tilapia',
         quantity: '',
@@ -657,6 +603,7 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
             if (!res.ok) throw new Error(data.error || "Erreur lors du remboursement");
             
             alert(`Remboursement de ${money(refundAmount)} effectué.`);
+            
             onRefundSuccess();
 
         } catch (e) {
@@ -666,6 +613,7 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
         }
     };
     
+    // Nouvelle vente : ne déclenche PLUS la compensation automatique
     const handleNewSale = async () => {
         setLoading(true);
         try {
@@ -676,6 +624,7 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
             
             const clientNameUpper = sale.clientName.toUpperCase(); 
 
+            // Créer la nouvelle vente. La dette est créée.
             const res = await apiFetch("/api/sales", {
                 method: "POST",
                 body: JSON.stringify({
@@ -733,6 +682,7 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
                                     <i className="bi bi-bag-fill me-2"></i> Utilisation sur Nouvelle Vente
                                 </button>
                             </li>
+                            {/* NOUVEL ONGLET : Compensation Manuelle */}
                             <li className="nav-item">
                                 <button 
                                     className={`nav-link ${useType === 'compensate' ? 'active' : ''}`}
@@ -780,7 +730,6 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
                                     data={newSaleFormData} 
                                     setData={setNewSaleFormData} 
                                     disabled={false}
-                                    isEdit={false} // Ce n'est pas une édition
                                 /> 
                                 
                                 <div className="alert alert-warning small text-center mt-3">
@@ -815,221 +764,31 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
     );
 }
 
-
-// ----------------------------------------------------------------------------------------------------------------------------------------------------------
-// NOUVELLES MODALES D'ÉDITION ET SUPPRESSION
-// ----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-/** NOUVEAU: Modale d'Édition de Vente */
-function EditSaleModal({ sale, onClose, onSaveSuccess }) {
-    // Initialiser le formulaire avec les données de la vente
-    const [formData, setFormData] = useState({
-        ...sale,
-        date: formatDate(sale.date) // Assurer que la date est au format YYYY-MM-DD
-    });
-    const [motif, setMotif] = useState("");
-    const [loading, setLoading] = useState(false);
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (motif.trim() === "") {
-            alert("Le motif de la modification est obligatoire.");
-            return;
-        }
-        setLoading(true);
-        try {
-            // Validation du nom client
-            const clientUpper = formData.clientName.toUpperCase();
-            if (!validateClientName(clientUpper)) {
-                throw new Error("Le nom du client doit être en MAJUSCULES (A-Z, 0-9) sans espace/caractère spécial.");
-            }
-            
-            // Validation des nombres
-            const q = Number(formData.quantity || 0);
-            const u = Number(formData.unitPrice || 0);
-            if (q <= 0 || u <= 0) throw new Error("Quantité et Prix Unitaire doivent être positifs.");
-
-            const res = await apiFetch(`/api/sales/${sale._id}`, {
-                method: "PUT",
-                body: JSON.stringify({
-                    saleData: { ...formData, clientName: clientUpper },
-                    motif: motif
-                })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Erreur lors de la mise à jour");
-            
-            alert("Vente mise à jour avec succès.");
-            onSaveSuccess();
-
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-            <div className="modal-dialog modal-dialog-centered modal-lg">
-                <div className="modal-content">
-                    <form onSubmit={handleSubmit}>
-                        <div className="modal-header bg-warning text-dark">
-                            <h5 className="modal-title">Modifier la Vente</h5>
-                            <button type="button" className="btn-close" onClick={onClose} disabled={loading}></button>
-                        </div>
-                        <div className="modal-body">
-                            <SaleFormBody 
-                                data={formData} 
-                                setData={setFormData} 
-                                disabled={loading} 
-                                isEdit={true} // Indique au composant d'afficher Date/Client
-                            />
-                            <hr className="my-4"/>
-                            <div className="mb-3">
-                                <label htmlFor="motifEdit" className="form-label fw-semibold text-danger">Motif de la modification (Obligatoire)</label>
-                                <textarea 
-                                    id="motifEdit"
-                                    className="form-control" 
-                                    rows="3"
-                                    value={motif} 
-                                    onChange={(e) => setMotif(e.target.value)} 
-                                    required
-                                    disabled={loading}
-                                    placeholder="Ex: Correction du prix unitaire convenu..."
-                                ></textarea>
-                            </div>
-                        </div>
-                        <div className="modal-footer">
-                            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Annuler</button>
-                            <button type="submit" className="btn btn-warning" disabled={loading || motif.trim() === ""}>
-                                <i className={`bi ${loading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>
-                                {loading ? "Sauvegarde..." : "Sauvegarder les Modifications"}
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-/** NOUVEAU: Modale de Suppression de Vente */
-function DeleteMotifModal({ sale, onClose, onDeleteSuccess }) {
-    const [motif, setMotif] = useState("");
-    const [loading, setLoading] = useState(false);
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        if (motif.trim() === "") {
-            alert("Le motif de la suppression est obligatoire.");
-            return;
-        }
-        
-        if (!window.confirm(`Êtes-vous sûr de vouloir SUPPRIMER DÉFINITIVEMENT cette vente pour ${sale.clientName} ?\n\nMontant: ${money(sale.amount)}\nMotif: ${motif}\n\nCette action est irréversible et sera journalisée.`)) {
-            return;
-        }
-        
-        setLoading(true);
-        try {
-            const res = await apiFetch(`/api/sales/${sale._id}`, {
-                method: "DELETE",
-                body: JSON.stringify({ motif: motif }) // Le backend attend un motif
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Erreur lors de la suppression");
-            
-            alert("Vente supprimée avec succès.");
-            onDeleteSuccess();
-
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-            <div className="modal-dialog modal-dialog-centered">
-                <div className="modal-content">
-                    <form onSubmit={handleSubmit}>
-                        <div className="modal-header bg-danger text-white">
-                            <h5 className="modal-title">Supprimer la Vente</h5>
-                            <button type="button" className="btn-close btn-close-white" onClick={onClose} disabled={loading}></button>
-                        </div>
-                        <div className="modal-body">
-                            <div className="alert alert-danger text-center">
-                                <i className="bi bi-exclamation-triangle-fill fs-4 me-2"></i>
-                                Vous êtes sur le point de **supprimer définitivement** cette vente.
-                            </div>
-                            <ul className="list-group list-group-flush mb-3">
-                                <li className="list-group-item d-flex justify-content-between"><strong>Client:</strong> {sale.clientName}</li>
-                                <li className="list-group-item d-flex justify-content-between"><strong>Date:</strong> {formatDate(sale.date)}</li>
-                                <li className="list-group-item d-flex justify-content-between"><strong>Montant:</strong> {money(sale.amount)}</li>
-                                <li className="list-group-item d-flex justify-content-between"><strong>Solde:</strong> {money(sale.balance)}</li>
-                            </ul>
-                            
-                            <div className="mb-3">
-                                <label htmlFor="motifDelete" className="form-label fw-semibold text-danger">Motif de la suppression (Obligatoire)</label>
-                                <textarea 
-                                    id="motifDelete"
-                                    className="form-control" 
-                                    rows="3"
-                                    value={motif} 
-                                    onChange={(e) => setMotif(e.target.value)} 
-                                    required
-                                    disabled={loading}
-                                    placeholder="Ex: Erreur de saisie, vente annulée par le client..."
-                                ></textarea>
-                            </div>
-                        </div>
-                        <div className="modal-footer">
-                            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Annuler</button>
-                            <button type="submit" className="btn btn-danger" disabled={loading || motif.trim() === ""}>
-                                <i className={`bi ${loading ? "bi-hourglass-split" : "bi-trash-fill"} me-2`}></i>
-                                {loading ? "Suppression..." : "Confirmer la Suppression"}
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 /** =====================================
  * SALES TABLE + ACTIONS 
- * (MISE À JOUR pour Édition/Suppression)
  * ===================================== */
-function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
+function SalesTable() {
   const [sales, setSales] = useState([]);
   const [filterType, setFilterType] = useState("");
-  const [searchClient, setSearchClient] = useState(""); 
+  const [searchClient, setSearchClient] = useState("");
+  const [loading, setLoading] = useState(true);
   const [openRow, setOpenRow] = useState(null);
   const [actionType, setActionType] = useState("");
   const [actionValue, setActionValue] = useState("");
-  
-  // Modales
-  const [modalSale, setModalSale] = useState(null); // Pour Crédit
-  const [saleToEdit, setSaleToEdit] = useState(null); // NOUVEAU: Pour Édition
-  const [saleToDelete, setSaleToDelete] = useState(null); // NOUVEAU: Pour Suppression
+  const [modalSale, setModalSale] = useState(null); 
 
   const load = async () => {
     setLoading(true);
     await new Promise(resolve => setTimeout(resolve, 100)); 
     const qs = new URLSearchParams();
     if (filterType) qs.set("fishType", filterType);
-    if (clientName || searchClient) qs.set("client", clientName || searchClient);
-    if (startDate) qs.set("startDate", startDate);
-    if (endDate) qs.set("endDate", endDate);
-
+    if (searchClient) qs.set("client", searchClient);
     const res = await apiFetch(`/api/sales?${qs.toString()}`);
     const data = await res.json();
     setSales(Array.isArray(data) ? data : []);
     setLoading(false);
   };
-  useEffect(() => { load(); }, [filterType, clientName, searchClient, startDate, endDate]);
+  useEffect(() => { load(); }, [filterType, searchClient]);
 
   const toggleAction = (id, type, suggested) => {
     if (openRow === id && actionType === type) {
@@ -1039,11 +798,8 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
     }
   };
 
-  // Handler de succès global pour toutes les modales
-  const handleActionSuccess = () => {
+  const handleModalSuccess = () => {
     setModalSale(null);
-    setSaleToEdit(null);
-    setSaleToDelete(null);
     window.dispatchEvent(new Event("reload-sales")); 
   };
 
@@ -1057,15 +813,18 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
         if (qty > remainingToDeliver) {
             throw new Error(`La quantité à livrer (${qty} kg) dépasse le reste à livrer (${remainingToDeliver} kg).`);
         }
+
         const res = await apiFetch(`/api/sales/${sale._id}/deliver`, { method: "PATCH", body: JSON.stringify({ qty }) });
         const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur livraison");
         setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
       } else if (actionType === "pay") {
         const amount = Number(actionValue || 0);
         if (amount <= 0) throw new Error("Montant invalide.");
+
         const res = await apiFetch(`/api/sales/${sale._id}/pay`, { method: "PATCH", body: JSON.stringify({ amount }) });
         const data = await res.json(); 
         if (!res.ok) throw new Error(data.error || "Erreur règlement");
+
         setSales((prev) => prev.map((s) => (s._id === sale._id ? data : s)));
         window.dispatchEvent(new Event("reload-sales")); 
       } 
@@ -1100,32 +859,13 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
 
   return (
     <div className="card border-0 shadow rounded-4 bg-white">
-      {/* Modale Utilisation Crédit */}
       {modalSale && (
         <CreditUseModal 
           sale={modalSale} 
           onClose={() => setModalSale(null)} 
-          onRefundSuccess={handleActionSuccess} 
-          onNewSaleSuccess={handleActionSuccess}
-          onManualCompensationSuccess={handleActionSuccess}
-        />
-      )}
-      
-      {/* NOUVEAU: Modale d'Édition */}
-      {saleToEdit && (
-        <EditSaleModal 
-            sale={saleToEdit}
-            onClose={() => setSaleToEdit(null)}
-            onSaveSuccess={handleActionSuccess}
-        />
-      )}
-      
-      {/* NOUVEAU: Modale de Suppression */}
-      {saleToDelete && (
-        <DeleteMotifModal 
-            sale={saleToDelete}
-            onClose={() => setSaleToDelete(null)}
-            onDeleteSuccess={handleActionSuccess}
+          onRefundSuccess={handleModalSuccess} 
+          onNewSaleSuccess={handleModalSuccess}
+          onManualCompensationSuccess={handleModalSuccess}
         />
       )}
       
@@ -1135,13 +875,7 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
           <div className="ms-auto d-flex gap-2 w-100 w-md-auto">
             <div className="input-group">
               <span className="input-group-text"><i className="bi bi-search"></i></span>
-              <input 
-                className="form-control" 
-                placeholder="Rechercher client..." 
-                value={clientName || searchClient} 
-                onChange={(e) => setSearchClient(e.target.value)} 
-                disabled={!!clientName} 
-              />
+              <input className="form-control" placeholder="Rechercher client..." value={searchClient} onChange={(e) => setSearchClient(e.target.value)} />
             </div>
             <select className="form-select" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
               <option value="">Tous les poissons</option>
@@ -1169,7 +903,7 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
                 <th>Payé</th>
                 <th>Solde</th>
                 <th>Statut</th>
-                <th style={{ width: 300 }}>Actions</th> {/* Augmentation de la largeur */}
+                <th style={{ width: 220 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1198,7 +932,7 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
                 return (
                   <React.Fragment key={s._id}>
                     <tr className={rowClass}>
-                      <td>{formatDate(s.date)}</td>
+                      <td>{new Date(s.date).toISOString().slice(0, 10)}</td>
                       <td className="fw-semibold">{s.clientName}</td>
                       <td><BadgeFish type={s.fishType} /></td>
                       <td>{s.quantity}</td>
@@ -1233,12 +967,13 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
                             <i className="bi bi-wallet"></i> Régler
                           </button>
                           
+                          {/* Utilise la modale pour le crédit */}
                           {balance < 0 && (
                               <button 
                                   className="btn btn-sm btn-success rounded-pill" 
                                   onClick={() => setModalSale(s)}
                               >
-                                  <i className="bi bi-arrow-left-right"></i> Crédit
+                                  <i className="bi bi-arrow-left-right"></i> Utiliser Crédit
                               </button>
                           )}
                           
@@ -1247,22 +982,6 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
                               <i className="bi bi-currency-dollar"></i>
                             </button>
                           )}
-                          
-                          {/* NOUVEAUX BOUTONS */}
-                          <button 
-                            className="btn btn-sm btn-outline-warning rounded-circle" 
-                            title="Modifier la vente"
-                            onClick={() => setSaleToEdit(s)}
-                          >
-                            <i className="bi bi-pencil-fill"></i>
-                          </button>
-                          <button 
-                            className="btn btn-sm btn-outline-danger rounded-circle" 
-                            title="Supprimer la vente"
-                            onClick={() => setSaleToDelete(s)}
-                          >
-                            <i className="bi bi-trash-fill"></i>
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1315,42 +1034,35 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
   );
 }
 
-// Wrapper pour SalesTable (inchangé)
-function ReloadableSalesTableWrapper({ clientName, startDate, endDate, loading, setLoading }) {
-  const [key, setKey] = useState(0); 
-  useEffect(() => {
-    const handler = () => setKey((k) => k + 1);
-    window.addEventListener("reload-sales", handler);
-    return () => window.removeEventListener("reload-sales", handler);
-  }, []);
-  return <SalesTable key={key} clientName={clientName} startDate={startDate} endDate={endDate} loading={loading} setLoading={setLoading} />;
-}
-
-// ReloadableSalesTable existant (inchangé)
 function ReloadableSalesTable() {
   const [key, setKey] = useState(0); 
-  const [loading, setLoading] = useState(false);
   useEffect(() => {
     const handler = () => setKey((k) => k + 1);
     window.addEventListener("reload-sales", handler);
     return () => window.removeEventListener("reload-sales", handler);
   }, []);
-  return <SalesTable key={key} clientName={""} startDate={""} endDate={""} loading={loading} setLoading={setLoading} />;
+  return <SalesTable key={key} />;
 }
 
-
 /** =====================================
- * CHARTS (inchangé)
+ * CHARTS 
  * ===================================== */
-function ChartsPanel({ sales, loading }) { 
+function ChartsPanel() {
   const chartReady = useChartJs();
-  const salesRef = useRef(null);
-  const debtsRef = useRef(null);
-  const typeRef = useRef(null);
-  const salesChart = useRef(null);
-  const debtsChart = useRef(null);
-  const typeChart = useRef(null);
-  
+  const [sales, setSales] = useState([]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      const res = await apiFetch("/api/sales");
+      const data = await res.json();
+      setSales(Array.isArray(data) ? data : []);
+    };
+    loadData();
+    const handler = () => loadData();
+    window.addEventListener("reload-sales", handler);
+    return () => window.removeEventListener("reload-sales", handler);
+  }, []);
+
   const data = useMemo(() => {
     const monthlyMap = new Map();
     let tilapiaAmount = 0;
@@ -1361,6 +1073,7 @@ function ChartsPanel({ sales, loading }) {
       const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const curr = monthlyMap.get(k) || { amount: 0, balance: 0 };
       curr.amount += Number(s.amount || 0);
+    
       curr.balance += Math.max(0, Number(s.balance || 0)); 
       monthlyMap.set(k, curr);
       if (s.fishType === "tilapia") tilapiaAmount += Number(s.amount || 0);
@@ -1373,11 +1086,15 @@ function ChartsPanel({ sales, loading }) {
     return { labels, amounts, balances, tilapiaAmount, pangasiusAmount };
   }, [sales]);
 
+  const salesRef = useRef(null);
+  const debtsRef = useRef(null);
+  const typeRef = useRef(null);
+  const salesChart = useRef(null);
+  const debtsChart = useRef(null);
+  const typeChart = useRef(null);
+
   useEffect(() => {
-    if (!chartReady || sales.length === 0) {
-        [salesChart, debtsChart, typeChart].forEach((chart) => chart.current?.destroy?.());
-        return;
-    };
+    if (!chartReady) return;
     const Chart = window.Chart;
     [salesChart, debtsChart, typeChart].forEach((chart) => chart.current?.destroy?.());
 
@@ -1422,23 +1139,7 @@ function ChartsPanel({ sales, loading }) {
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } },
     });
-    
-    return () => { 
-        [salesChart, debtsChart, typeChart].forEach((chart) => chart.current?.destroy?.());
-    };
-  }, [chartReady, data, sales]); 
-  
-  
-  if (loading || sales.length === 0) {
-      return (
-        <div className="row g-4 mb-4">
-            <div className="col-lg-6 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100 p-5 text-center text-muted">Aucune donnée de vente pour cette sélection.</div></div>
-            <div className="col-lg-6 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100 p-5 text-center text-muted">Aucune donnée de vente pour cette sélection.</div></div>
-            <div className="col-lg-12 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100 p-5 text-center text-muted">Aucune donnée de vente pour cette sélection.</div></div>
-        </div>
-      );
-  }
-
+  }, [chartReady, data]);
 
   return (
     <div className="row g-4 mb-4">
@@ -1477,23 +1178,35 @@ function ChartsPanel({ sales, loading }) {
 }
 
 /** =====================================
- * NOTIFS D'ÉCHÉANCE (inchangé)
+ * NOTIFS D'ÉCHÉANCE 
  * ===================================== */
-function DueNotificationsPanel({ sales, loading }) { 
+function DueNotificationsPanel() {
+  const [sales, setSales] = useState([]);
   const [thresholdDays, setThresholdDays] = useState(Number(localStorage.getItem("due_threshold_days") || 30));
   const [perm, setPerm] = useState(typeof Notification !== "undefined" ? Notification?.permission : "default");
+
+  useEffect(() => { 
+    const loadData = async () => {
+        const res = await apiFetch("/api/sales");
+        const data = await res.json();
+        setSales(Array.isArray(data) ? data : []);
+    };
+    loadData();
+    const handler = () => loadData();
+    window.addEventListener("reload-sales", handler);
+    return () => window.removeEventListener("reload-sales", handler);
+  }, []);
 
   useEffect(() => { localStorage.setItem("due_threshold_days", String(thresholdDays)); }, [thresholdDays]);
 
   const overdue = useMemo(() => {
-    if (loading || sales.length === 0) return [];
     const now = Date.now();
     const cut = thresholdDays * 24 * 3600 * 1000;
     return sales
-      .filter((s) => Number(s.balance || 0) > 0 && now - new Date(s.date).getTime() > cut) 
+      .filter((s) => Number(s.balance || 0) > 0 && now - new Date(s.date).getTime() > cut) // Balance > 0 = dette client
       .map((s) => ({ id: s._id, client: s.clientName, date: new Date(s.date), balance: s.balance, days: Math.floor((now - new Date(s.date).getTime()) / (24 * 3600 * 1000)) }))
       .sort((a, b) => b.days - a.days);
-  }, [sales, thresholdDays, loading]); 
+  }, [sales, thresholdDays]);
 
   const askPerm = async () => {
     if (typeof window === "undefined" || !("Notification" in window)) {
@@ -1510,14 +1223,6 @@ function DueNotificationsPanel({ sales, loading }) {
     const body = top.map((o) => `${o.client}: ${money(o.balance)} (${o.days} j)`).join("\n");
     new Notification("Dettes en retard", { body });
   };
-  
-  if (loading && sales.length === 0) {
-      return (
-        <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-            <div className="card-body p-4"><div className="text-center py-3 text-muted">Chargement des alertes...</div></div>
-        </div>
-      );
-  }
 
   return (
     <div className="card border-0 shadow rounded-4 mb-4 bg-white">
@@ -1568,55 +1273,31 @@ function DueNotificationsPanel({ sales, loading }) {
 }
 
 /** =====================================
- * SUMMARY CARDS (inchangé)
+ * SUMMARY CARDS 
  * ===================================== */
-function SummaryCards({ sum, loading }) {
-  
-  if (loading || !sum) {
-      const CardLoading = ({ title, iconClass, cardClass }) => (
-        <div className="col-12 col-md-3">
-          <div className={`card border-0 shadow-sm rounded-4 ${cardClass} h-100`}>
-            <div className="card-body d-flex align-items-center p-4">
-                <div className="me-3 p-3 rounded-circle bg-opacity-25 bg-white d-flex align-items-center justify-content-center" style={{ width: 60, height: 60 }}>
-                    <i className={`bi ${iconClass} fs-3`}></i>
-                </div>
-                <div>
-                    <div className="text-uppercase small opacity-75">{title}</div>
-                    <div className="h3 m-0 fw-bold">{loading ? <i className="bi bi-arrow-clockwise spin small"></i> : money(0)}</div>
-                </div>
-            </div>
-          </div>
-        </div>
-      );
-      
-      return (
-        <div className="row g-4 mb-5">
-            <CardLoading title="Total Ventes" iconClass="bi-graph-up-arrow text-primary" cardClass="bg-primary text-white bg-opacity-75" />
-            <CardLoading title="Total Encaissé" iconClass="bi-check-circle-fill text-success" cardClass="bg-success text-white bg-opacity-75" />
-            <CardLoading title="Dettes Clients (Actuelles)" iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
-            <CardLoading title="Crédits Dûs (Entreprise)" iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" />
-            <div className="col-12 col-md-6">
-                <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
-                    <div className="card-body text-center text-muted">Détail Tilapia (0 XOF)</div>
-                </div>
-            </div>
-            <div className="col-12 col-md-6">
-                <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
-                    <div className="card-body text-center text-muted">Détail Pangasius (0 XOF)</div>
-                </div>
-            </div>
-        </div>
-      );
-  }
+function SummaryCards() {
+  const [sum, setSum] = useState(null);
+  useEffect(() => { (async () => {
+    const loadSummary = async () => {
+        const res = await apiFetch("/api/summary");
+        const data = await res.json();
+        setSum(data);
+    };
+    loadSummary();
+    const handler = () => loadSummary();
+    window.addEventListener("reload-sales", handler);
+    return () => window.removeEventListener("reload-sales", handler);
+  })(); }, []);
+  if (!sum) return null;
 
   const byTilapia = sum.byFish?.find((f) => f.fishType === "tilapia") || { amount: 0, payment: 0, balance: 0 };
   const byPanga = sum.byFish?.find((f) => f.fishType === "pangasius") || { amount: 0, payment: 0, balance: 0 };
   
-  const totalDebt = sum.totalDebt || 0; 
-  const totalCredit = sum.totalCredit || 0; 
-  
-  const Card = ({ title, amount, iconClass, cardClass }) => (
-    <div className="col-12 col-md-3"> 
+  const totalBalanceAbs = Math.abs(sum.totalBalance);
+  const totalBalanceIsCredit = sum.totalBalance < 0;
+
+  const Card = ({ title, amount, iconClass, cardClass, isCredit }) => (
+    <div className="col-12 col-md-4">
       <div className={`card border-0 shadow-sm rounded-4 ${cardClass} h-100`}>
         <div className="card-body d-flex align-items-center p-4">
           <div className="me-3 p-3 rounded-circle bg-opacity-25 bg-white d-flex align-items-center justify-content-center" style={{ width: 60, height: 60 }}>
@@ -1624,6 +1305,7 @@ function SummaryCards({ sum, loading }) {
           </div>
           <div>
             <div className="text-uppercase small opacity-75">{title}</div>
+            {isCredit && <div className="text-uppercase small opacity-75">(Crédit Net)</div>}
             <div className="h3 m-0 fw-bold">{money(amount)}</div>
           </div>
         </div>
@@ -1635,9 +1317,13 @@ function SummaryCards({ sum, loading }) {
     <div className="row g-4 mb-5">
       <Card title="Total Ventes" amount={sum.totalAmount} iconClass="bi-graph-up-arrow text-primary" cardClass="bg-primary text-white bg-opacity-75" />
       <Card title="Total Encaissé" amount={sum.totalPayment} iconClass="bi-check-circle-fill text-success" cardClass="bg-success text-white bg-opacity-75" />
-      <Card title="Dettes Clients (Actuelles)" amount={totalDebt} iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
-      <Card title="Crédits Dûs (Entreprise)" amount={totalCredit} iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" />
-      
+      <Card 
+        title={totalBalanceIsCredit ? "Crédit Net" : "Solde/Encours"} 
+        amount={totalBalanceAbs} 
+        isCredit={totalBalanceIsCredit}
+        iconClass={totalBalanceIsCredit ? "bi-arrow-down-circle-fill text-success" : "bi-currency-exchange text-danger"} 
+        cardClass={totalBalanceIsCredit ? "bg-success text-white bg-opacity-75" : "bg-danger text-white bg-opacity-75"} 
+      />
       <div className="col-12 col-md-6">
         <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
           <div className="card-body">
@@ -1650,7 +1336,7 @@ function SummaryCards({ sum, loading }) {
               <div className="col-4">Ventes: <br /><strong className="text-primary">{money(byTilapia.amount)}</strong></div>
               <div className="col-4">Payé: <br /><strong className="text-success">{money(byTilapia.payment)}</strong></div>
               <div className="col-4">
-                {byTilapia.balance >= 0 ? "Solde Net (Période):" : "Crédit Net (Période):"} <br />
+                {byTilapia.balance >= 0 ? "Solde:" : "Crédit:"} <br />
                 <strong className={byTilapia.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byTilapia.balance))}</strong>
               </div>
             </div>
@@ -1669,7 +1355,7 @@ function SummaryCards({ sum, loading }) {
               <div className="col-4">Ventes: <br /><strong className="text-primary">{money(byPanga.amount)}</strong></div>
               <div className="col-4">Payé: <br /><strong className="text-success">{money(byPanga.payment)}</strong></div>
               <div className="col-4">
-                {byPanga.balance >= 0 ? "Solde Net (Période):" : "Crédit Net (Période):"} <br />
+                {byPanga.balance >= 0 ? "Solde:" : "Crédit:"} <br />
                 <strong className={byPanga.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byPanga.balance))}</strong>
               </div>
             </div>
@@ -1681,9 +1367,9 @@ function SummaryCards({ sum, loading }) {
 }
 
 /** =====================================
- * DEBTS BOARD (inchangé)
+ * DEBTS BOARD 
  * ===================================== */
-function DebtsBoard({ clientName, startDate, endDate, loading }) {
+function DebtsBoard() {
   const [debts, setDebts] = useState([]);
   
   const loadDebts = useMemo(() => async () => {
@@ -1700,33 +1386,6 @@ function DebtsBoard({ clientName, startDate, endDate, loading }) {
   }, [loadDebts]); 
 
   const total = debts.reduce((sum, d) => sum + d.totalDebt, 0);
-
-  if (clientName === undefined) {
-      if (loading) {
-          return (
-            <div className="card border-0 shadow rounded-4 bg-white">
-                <div className="card-body p-4">
-                    <div className="d-flex align-items-center mb-4 pb-2 border-bottom">
-                        <h5 className="m-0 fw-bold"><i className="bi bi-person-lines-fill me-2 text-danger"></i>Top Dettes Clients</h5>
-                        <span className="ms-auto badge text-bg-danger p-2 fs-6">Encours Total: {money(0)}</span>
-                    </div>
-                    <div className="text-center py-5 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...</div>
-                </div>
-            </div>
-          );
-      }
-      return (
-        <div className="card border-0 shadow rounded-4 bg-white">
-            <div className="card-body p-4">
-                <div className="d-flex align-items-center mb-4 pb-2 border-bottom">
-                    <h5 className="m-0 fw-bold"><i className="bi bi-person-lines-fill me-2 text-danger"></i>Top Dettes Clients</h5>
-                    <span className="ms-auto badge text-bg-danger p-2 fs-6">Encours Total: {money(0)}</span>
-                </div>
-                <div className="text-center py-5 text-muted">Sélectionnez un filtre ou consultez la page Dettes Clients.</div>
-            </div>
-        </div>
-      );
-  }
 
   return (
     <div className="card border-0 shadow rounded-4 bg-white">
@@ -1760,9 +1419,9 @@ function DebtsBoard({ clientName, startDate, endDate, loading }) {
 }
 
 /** =====================================
- * CREDITS BOARD (inchangé)
+ * CREDITS BOARD 
  * ===================================== */
-function CreditsBoard({ clientName, startDate, endDate, loading }) {
+function CreditsBoard() {
   const [credits, setCredits] = useState([]);
   
   const loadCredits = useMemo(() => async () => {
@@ -1780,33 +1439,6 @@ function CreditsBoard({ clientName, startDate, endDate, loading }) {
   
   const total = credits.reduce((sum, d) => sum + d.totalCredit, 0);
 
-  if (clientName === undefined) {
-      if (loading) {
-          return (
-            <div className="card border-0 shadow rounded-4 bg-white">
-                <div className="card-body p-4">
-                    <div className="d-flex align-items-center mb-4 pb-2 border-bottom">
-                        <h5 className="m-0 fw-bold"><i className="bi bi-person-check-fill me-2 text-success"></i>Crédits Clients</h5>
-                        <span className="ms-auto badge text-bg-success p-2 fs-6">Crédit Total: {money(0)}</span>
-                    </div>
-                    <div className="text-center py-5 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...</div>
-                </div>
-            </div>
-          );
-      }
-      return (
-        <div className="card border-0 shadow rounded-4 bg-white">
-            <div className="card-body p-4">
-                <div className="d-flex align-items-center mb-4 pb-2 border-bottom">
-                    <h5 className="m-0 fw-bold"><i className="bi bi-person-check-fill me-2 text-success"></i>Crédits Clients</h5>
-                    <span className="ms-auto badge text-bg-success p-2 fs-6">Crédit Total: {money(0)}</span>
-                </div>
-                <div className="text-center py-5 text-muted">Sélectionnez un filtre ou consultez la page Dettes Clients.</div>
-            </div>
-        </div>
-      );
-  }
-  
   return (
     <div className="card border-0 shadow rounded-4 bg-white">
       <div className="card-body p-4">
@@ -1839,7 +1471,7 @@ function CreditsBoard({ clientName, startDate, endDate, loading }) {
 }
 
 /** =====================================
- * CLIENT REPORT (BILAN) (inchangé)
+ * CLIENT REPORT (BILAN) (Export Excel)
  * ===================================== */
 function ClientReportPage() {
   const [clients, setClients] = useState([]);
@@ -1934,200 +1566,38 @@ function ClientReportPage() {
 
 
 /** =====================================
- * PAGE : BILAN GLOBAL DES VENTES (inchangée)
- * ===================================== */
-function SalesBalancePage() {
-  const [sum, setSum] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const loadSummary = async () => {
-      setLoading(true);
-      try {
-        const res = await apiFetch("/api/summary?isGlobal=true"); 
-        const data = await res.json();
-        setSum(data);
-      } catch (e) {
-        console.error("Erreur de chargement du bilan:", e);
-        setSum(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadSummary();
-    const handler = () => loadSummary();
-    window.addEventListener("reload-sales", handler);
-    return () => window.removeEventListener("reload-sales", handler);
-  }, []);
-
-  if (loading) {
-      return <div className="text-center py-5 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement du Bilan Global...</div>;
-  }
-  
-  const totalDebt = sum?.totalDebt || 0;
-  const totalCredit = sum?.totalCredit || 0;
-  
-  const byTilapia = sum?.byFish?.find((f) => f.fishType === "tilapia") || { amount: 0, payment: 0, balance: 0 };
-  const byPanga = sum?.byFish?.find((f) => f.fishType === "pangasius") || { amount: 0, payment: 0, balance: 0 };
-
-  return (
-    <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-      <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center">
-        <i className="bi bi-file-earmark-spreadsheet-fill me-2 fs-5"></i>
-        <h5 className="m-0">Bilan Financier Global de l'Entreprise</h5>
-      </div>
-      <div className="card-body p-4">
-        <p className="text-muted small">Ce bilan présente les totaux globaux (toutes périodes et tous clients confondus) de l'activité.</p>
-
-        <div className="row g-4 mb-5">
-            <div className="col-md-6 col-lg-3">
-                <div className="card bg-primary text-white bg-opacity-75 shadow h-100">
-                    <div className="card-body">
-                        <div className="small text-uppercase">Total des Ventes</div>
-                        <h4 className="fw-bold m-0">{money(sum?.totalAmount || 0)}</h4>
-                    </div>
-                </div>
-            </div>
-            <div className="col-md-6 col-lg-3">
-                <div className="card bg-success text-white bg-opacity-75 shadow h-100">
-                    <div className="card-body">
-                        <div className="small text-uppercase">Total Encaissé</div>
-                        <h4 className="fw-bold m-0">{money(sum?.totalPayment || 0)}</h4>
-                    </div>
-                </div>
-            </div>
-            <div className="col-md-6 col-lg-3">
-                <div className="card bg-danger text-white bg-opacity-75 shadow h-100">
-                    <div className="card-body">
-                        <div className="small text-uppercase">Dettes Totales Clients</div>
-                        <h4 className="fw-bold m-0">{money(totalDebt)}</h4>
-                    </div>
-                </div>
-            </div>
-            <div className="col-md-6 col-lg-3">
-                <div className="card bg-info text-white bg-opacity-75 shadow h-100">
-                    <div className="card-body">
-                        <div className="small text-uppercase">Crédits Totaux Dûs</div>
-                        <h4 className="fw-bold m-0">{money(totalCredit)}</h4>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <h5 className="fw-bold mb-3">Détail des Ventes par Type de Poisson</h5>
-        <div className="row g-4">
-            <div className="col-lg-6">
-                <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
-                    <div className="card-body">
-                        <div className="d-flex justify-content-between align-items-center">
-                            <h6 className="m-0 fw-bold">Tilapia</h6>
-                            <BadgeFish type="tilapia" />
-                        </div>
-                        <hr />
-                        <div className="row small text-muted">
-                            <div className="col-4">Ventes: <br /><strong className="text-primary">{money(byTilapia.amount)}</strong></div>
-                            <div className="col-4">Payé: <br /><strong className="text-success">{money(byTilapia.payment)}</strong></div>
-                            <div className="col-4">Solde Net: <br /><strong className={byTilapia.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byTilapia.balance))}</strong></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div className="col-lg-6">
-                <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
-                    <div className="card-body">
-                        <div className="d-flex justify-content-between align-items-center">
-                            <h6 className="m-0 fw-bold">Pangasius</h6>
-                            <BadgeFish type="pangasius" />
-                        </div>
-                        <hr />
-                        <div className="row small text-muted">
-                            <div className="col-4">Ventes: <br /><strong className="text-primary">{money(byPanga.amount)}</strong></div>
-                            <div className="col-4">Payé: <br /><strong className="text-success">{money(byPanga.payment)}</strong></div>
-                            <div className="col-4">Solde Net: <br /><strong className={byPanga.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byPanga.balance))}</strong></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-/** =====================================
- * PAGE : CHARTS PAGE (GLOBAL) (inchangée)
- * ===================================== */
-function ChartsPage() {
-    const [sum, setSum] = useState(null);
-    const [salesData, setSalesData] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        const loadData = async () => {
-            setLoading(true);
-            try {
-                const resSummary = await apiFetch("/api/summary?isGlobal=true"); 
-                const resultSummary = await resSummary.json();
-                if (!resSummary.ok) throw new Error(resultSummary.error || "Erreur de chargement du résumé.");
-                setSum(resultSummary);
-                
-                const resSales = await apiFetch(`/api/sales`); 
-                const resultSales = await resSales.json();
-                if (!resSales.ok) throw new Error(resultSales.error || "Erreur de chargement des ventes.");
-                setSalesData(resultSales);
-
-            } catch (e) {
-                console.error("Erreur de chargement des graphiques:", e);
-                setSum(null);
-                setSalesData([]);
-            } finally {
-                setLoading(false);
-            }
-        };
-        loadData();
-        const handler = () => loadData();
-        window.addEventListener("reload-sales", handler);
-        return () => window.removeEventListener("reload-sales", handler);
-    }, []);
-
-    const pageTitle = "Analyse Graphique 📈 - Données Globales";
-
-    return (
-        <>
-            <div className="alert alert-info text-center">
-                <i className="bi bi-info-circle me-2"></i> Les graphiques et les totaux affichés ici représentent les **données globales** (toutes périodes et tous clients confondus).
-            </div>
-            <ChartsPanel sales={salesData} loading={loading} />
-            <SummaryCards sum={sum} loading={loading} />
-            <DueNotificationsPanel sales={salesData} loading={loading} />
-        </>
-    );
-}
-
-
-/** =====================================
- * PAGE : CLIENT ANALYSIS (inchangée)
+ * NOUVELLE PAGE : CLIENT ANALYSIS
  * ===================================== */
 function ClientAnalysisPage() {
-    const clients = useClients(); 
+    const [clients, setClients] = useState([]);
     const [selectedClient, setSelectedClient] = useState("");
     const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
     const [startDate, setStartDate] = useState(() => {
         const d = new Date();
-        d.setFullYear(d.getFullYear() - 1); 
+        d.setFullYear(d.getFullYear() - 1); // Par défaut: 1 an
         return d.toISOString().slice(0, 10);
     });
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
+    // Charger la liste de tous les clients
     useEffect(() => {
-        if (!selectedClient && clients.length > 0) {
-             setSelectedClient(clients[0]);
-        }
-    }, [clients, selectedClient]); // Ajout de selectedClient en dépendance
+        (async () => {
+            try {
+                const res = await apiFetch("/api/clients");
+                const clientsList = await res.json();
+                setClients(Array.isArray(clientsList) ? clientsList.sort() : []);
+                if (clientsList.length > 0) {
+                    setSelectedClient(clientsList[0]);
+                }
+            } catch (e) {
+                setError("Erreur lors du chargement des clients.");
+            }
+        })();
+    }, []);
     
+    // Fonction pour charger les données spécifiques
     const loadClientData = async (client, start, end) => {
         if (!client) return;
         setLoading(true);
@@ -2150,6 +1620,7 @@ function ClientAnalysisPage() {
         }
     };
     
+    // Rechargement des données à chaque changement de filtre
     useEffect(() => {
         if (selectedClient) {
             loadClientData(selectedClient, startDate, endDate);
@@ -2175,6 +1646,7 @@ function ClientAnalysisPage() {
                     Sélectionnez un client et une période pour voir ses statistiques agrégées (solde net, ventes, quantités) et ses dernières opérations.
                 </div>
                 
+                {/* Sélecteurs Client / Date */}
                 <div className="row g-3 mb-4 p-3 bg-light rounded-3 border">
                     <div className="col-12 col-md-4">
                         <label className="form-label small fw-semibold">Client / Entreprise</label>
@@ -2219,7 +1691,9 @@ function ClientAnalysisPage() {
                     <>
                         <h4 className="fw-bold mb-3">Synthèse pour {selectedClient} ({dateRangeDisplay})</h4>
 
+                        {/* Cartes de Résumé Périodique */}
                         <div className="row g-4 mb-4">
+                            {/* Total Ventes (Montant) */}
                             <div className="col-lg-3 col-md-6">
                                 <div className="card bg-primary text-white bg-opacity-75 shadow h-100">
                                     <div className="card-body">
@@ -2229,6 +1703,7 @@ function ClientAnalysisPage() {
                                     </div>
                                 </div>
                             </div>
+                            {/* Total Encaissé */}
                             <div className="col-lg-3 col-md-6">
                                 <div className="card bg-success text-white bg-opacity-75 shadow h-100">
                                     <div className="card-body">
@@ -2238,6 +1713,7 @@ function ClientAnalysisPage() {
                                     </div>
                                 </div>
                             </div>
+                            {/* Solde Net Actuel (Globale) */}
                             <div className="col-lg-3 col-md-6">
                                 <div className={`card ${totalDebt > totalCredit ? 'bg-danger' : 'bg-success'} text-white bg-opacity-75 shadow h-100`}>
                                     <div className="card-body">
@@ -2249,6 +1725,7 @@ function ClientAnalysisPage() {
                                     </div>
                                 </div>
                             </div>
+                            {/* Total Dettes / Crédits */}
                             <div className="col-lg-3 col-md-6">
                                 <div className="card bg-warning text-dark bg-opacity-75 shadow h-100">
                                     <div className="card-body">
@@ -2276,7 +1753,7 @@ function ClientAnalysisPage() {
                                 <tbody>
                                     {recentSales.map(s => (
                                         <tr key={s._id} className={s.balance > 0 ? 'table-danger-subtle' : (s.balance < 0 ? 'table-success-subtle' : '')}>
-                                            <td>{formatDate(s.date)}</td>
+                                            <td>{new Date(s.date).toISOString().slice(0, 10)}</td>
                                             <td><BadgeFish type={s.fishType} /></td>
                                             <td>{s.quantity}</td>
                                             <td>{money(s.amount)}</td>
@@ -2300,344 +1777,10 @@ function ClientAnalysisPage() {
     );
 }
 
-/** =====================================
- * DASHBOARD PAGE (inchangé)
- * ===================================== */
-function DashboardPage() {
-    const clients = useClients();
-    const [selectedClient, setSelectedClient] = useState("");
-    const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
-    const [startDate, setStartDate] = useState(() => {
-        const d = new Date();
-        d.setFullYear(d.getFullYear() - 1); 
-        return d.toISOString().slice(0, 10);
-    });
-    
-    const [summaryData, setSummaryData] = useState(null);
-    const [salesData, setSalesData] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
-    
-    const hasFilter = useMemo(() => !!selectedClient || !!startDate || !!endDate, [selectedClient, startDate, endDate]);
-
-    const loadData = async (client, start, end) => {
-        setLoading(true);
-        setError('');
-        setSummaryData(null);
-        setSalesData([]);
-        
-        const qs = new URLSearchParams();
-        if (client) qs.set('clientName', client);
-        if (start) qs.set('startDate', start);
-        if (end) qs.set('endDate', end);
-        
-        try {
-            const resSummary = await apiFetch(`/api/summary?${qs.toString()}`);
-            const resultSummary = await resSummary.json();
-            if (!resSummary.ok) throw new Error(resultSummary.error || "Erreur de chargement du résumé.");
-            setSummaryData(resultSummary);
-            
-            const qsSales = new URLSearchParams();
-            if (client) qsSales.set('client', client);
-            if (start) qsSales.set('startDate', start);
-            if (end) qsSales.set('endDate', end);
-
-            const resSales = await apiFetch(`/api/sales?${qsSales.toString()}`);
-            const resultSales = await resSales.json();
-            if (!resSales.ok) throw new Error(resultSales.error || "Erreur de chargement des ventes.");
-            setSalesData(resultSales);
-
-        } catch (e) {
-            setError(e.message);
-        } finally {
-            setLoading(false);
-            window.dispatchEvent(new Event("reload-sales")); 
-        }
-    };
-    
-    useEffect(() => {
-        if (hasFilter) {
-            loadData(selectedClient, startDate, endDate);
-        } else {
-            setSummaryData(null);
-            setSalesData([]);
-            setLoading(false);
-        }
-    }, [selectedClient, startDate, endDate, hasFilter]);
-    
-    
-    const showLoading = loading || (hasFilter && !summaryData && !salesData.length);
-
-    return (
-        <>
-            <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-                <div className="card-body p-4">
-                    <h5 className="fw-bold mb-3"><i className="bi bi-funnel-fill me-2 text-info"></i>Filtres du Dashboard</h5>
-                    <div className="row g-3">
-                        <div className="col-12 col-md-4">
-                            <label className="form-label small fw-semibold">Client / Entreprise</label>
-                            <select 
-                                className="form-select"
-                                value={selectedClient} 
-                                onChange={(e) => setSelectedClient(e.target.value)}
-                                disabled={loading}
-                            >
-                                <option value="">-- Tous les clients --</option>
-                                {clients.map(client => (
-                                    <option key={client} value={client}>{client}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="col-6 col-md-4">
-                            <label className="form-label small fw-semibold">Date de Début</label>
-                            <input 
-                                type="date" 
-                                className="form-control"
-                                value={startDate} 
-                                onChange={(e) => setStartDate(e.target.value)}
-                                disabled={loading}
-                            />
-                        </div>
-                        <div className="col-6 col-md-4">
-                            <label className="form-label small fw-semibold">Date de Fin</label>
-                            <input 
-                                type="date" 
-                                className="form-control"
-                                value={endDate} 
-                                onChange={(e) => setEndDate(e.target.value)}
-                                disabled={loading}
-                            />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {!hasFilter && (
-                <div className="alert alert-warning text-center">
-                    <i className="bi bi-info-circle me-2"></i> Veuillez **sélectionner au moins un client ou une période** pour afficher les données du Dashboard.
-                </div>
-            )}
-            
-            {error && <div className="alert alert-danger text-center">{error}</div>}
-            
-            <SummaryCards sum={hasFilter ? summaryData : null} loading={showLoading} />
-            <DueNotificationsPanel sales={salesData} loading={showLoading} />
-            <ChartsPanel sales={salesData} loading={showLoading} />
-
-            <div className="row g-4 mt-1">
-              <div className="col-lg-6">
-                <DebtsBoard clientName={hasFilter ? "placeholder" : undefined} loading={showLoading} />
-              </div>
-              <div className="col-lg-6">
-                <CreditsBoard clientName={hasFilter ? "placeholder" : undefined} loading={showLoading} />
-              </div>
-            </div>
-            
-            <div className="row g-4 mt-4">
-              <div className="col-12">
-                <ReloadableSalesTableWrapper 
-                    clientName={selectedClient} 
-                    startDate={startDate} 
-                    endDate={endDate} 
-                    loading={loading}
-                    setLoading={setLoading}
-                />
-              </div>
-            </div>
-        </>
-    );
-}
-
-// ----------------------------------------------------------------------------------------------------------------------------------------------------------
-// NOUVELLES PAGES (BILAN MOTIFS / HISTORIQUE ACTIONS)
-// ----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-/** NOUVEAU: Page Bilan Motifs */
-function MotifSummaryPage() {
-    const [logs, setLogs] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        const loadLogs = async () => {
-            setLoading(true);
-            try {
-                const res = await apiFetch("/api/action-logs");
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || "Erreur de chargement des logs");
-                setLogs(Array.isArray(data) ? data : []);
-            } catch (e) {
-                alert(e.message);
-                setLogs([]);
-            } finally {
-                setLoading(false);
-            }
-        };
-        loadLogs();
-    }, []);
-
-    return (
-        <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-            <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center">
-                <i className="bi bi-journal-text me-2 fs-5"></i>
-                <h5 className="m-0">Bilan des Motifs d'Actions</h5>
-            </div>
-            <div className="card-body p-4">
-                <p className="text-muted">Cet écran liste toutes les modifications et suppressions effectuées, avec le motif associé.</p>
-                
-                <div className="table-responsive">
-                    <table className="table table-striped align-middle">
-                        <thead className="table-dark">
-                            <tr>
-                                <th>Date Action</th>
-                                <th>Utilisateur</th>
-                                <th>Action</th>
-                                <th>Motif</th>
-                                <th>ID Vente Originelle</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading && (
-                                <tr>
-                                    <td colSpan="5" className="text-center py-5 text-muted">
-                                        <i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...
-                                    </td>
-                                </tr>
-                            )}
-                            {!loading && logs.length === 0 && (
-                                <tr>
-                                    <td colSpan="5" className="text-center py-5 text-muted">
-                                        Aucun motif enregistré.
-                                    </td>
-                                </tr>
-                            )}
-                            {logs.map(log => (
-                                <tr key={log._id}>
-                                    <td>{formatDateTime(log.createdAt)}</td>
-                                    <td>{log.companyName}</td>
-                                    <td>
-                                        {log.actionType === 'edit' ? (
-                                            <span className="badge text-bg-warning">Modification</span>
-                                        ) : (
-                                            <span className="badge text-bg-danger">Suppression</span>
-                                        )}
-                                    </td>
-                                    <td className="small" style={{ minWidth: 250 }}>{log.motif}</td>
-                                    <td className="small text-muted">{log.saleId}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-/** NOUVEAU: Page Historique des Actions (Ventes modifiées/supprimées) */
-function ActionHistoryPage() {
-    const [logs, setLogs] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        const loadLogs = async () => {
-            setLoading(true);
-            try {
-                const res = await apiFetch("/api/action-logs");
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || "Erreur de chargement des logs");
-                setLogs(Array.isArray(data) ? data : []);
-            } catch (e) {
-                alert(e.message);
-                setLogs([]);
-            } finally {
-                setLoading(false);
-            }
-        };
-        loadLogs();
-    }, []);
-
-    return (
-        <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-            <div className="card-header bg-danger text-white rounded-top-4 p-3 d-flex align-items-center">
-                <i className="bi bi-trash-fill me-2 fs-5"></i>
-                <h5 className="m-0">Historique des Ventes Modifiées & Supprimées</h5>
-            </div>
-            <div className="card-body p-4">
-                <p className="text-muted">Cet écran affiche une copie (snapshot) des ventes au moment de leur modification ou suppression.</p>
-                
-                <div className="table-responsive">
-                    <table className="table table-sm table-bordered align-middle">
-                        <thead className="table-dark">
-                            <tr>
-                                {/* Infos de Log */}
-                                <th>Action</th>
-                                <th>Date Action</th>
-                                <th>Utilisateur</th>
-                                <th>Motif</th>
-                                {/* Infos de Vente (Snapshot) */}
-                                <th>Date Vente</th>
-                                <th>Client</th>
-                                <th>Poisson</th>
-                                <th>Qté</th>
-                                <th>PU</th>
-                                <th>Montant</th>
-                                <th>Payé</th>
-                                <th>Solde</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading && (
-                                <tr>
-                                    <td colSpan="12" className="text-center py-5 text-muted">
-                                        <i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...
-                                    </td>
-                                </tr>
-                            )}
-                            {!loading && logs.length === 0 && (
-                                <tr>
-                                    <td colSpan="12" className="text-center py-5 text-muted">
-                                        Aucune action enregistrée.
-                                    </td>
-                                </tr>
-                            )}
-                            {logs.map(log => {
-                                const s = log.saleData; // Le snapshot de la vente
-                                const isEdit = log.actionType === 'edit';
-                                return (
-                                    <tr key={log._id} className={isEdit ? 'table-warning-subtle' : 'table-danger-subtle'}>
-                                        {/* Log */}
-                                        <td>
-                                            <span className={`badge ${isEdit ? 'text-bg-warning' : 'text-bg-danger'}`}>
-                                                {isEdit ? 'Modifié' : 'Supprimé'}
-                                            </span>
-                                        </td>
-                                        <td className="small">{formatDateTime(log.createdAt)}</td>
-                                        <td className="small">{log.companyName}</td>
-                                        <td className="small" style={{ minWidth: 200 }}>{log.motif}</td>
-                                        {/* Snapshot Vente */}
-                                        <td>{formatDate(s.date)}</td>
-                                        <td className="fw-semibold">{s.clientName}</td>
-                                        <td><BadgeFish type={s.fishType} /></td>
-                                        <td>{s.quantity} kg</td>
-                                        <td>{money(s.unitPrice)}</td>
-                                        <td>{money(s.amount)}</td>
-                                        <td>{money(s.payment)}</td>
-                                        <td className={s.balance > 0 ? "text-danger" : (s.balance < 0 ? "text-success" : "")}>
-                                            {money(s.balance)}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    );
-}
+// ... (le reste du fichier App.js suit)
 
 /** =====================================
- * APP PRINCIPALE (MISE À JOUR)
+ * APP PRINCIPALE
  * ===================================== */
 export default function App() {
   const { isMdUp } = useViewport();
@@ -2654,17 +1797,13 @@ export default function App() {
 
   const getPageTitle = (page) => {
     switch (page) {
-      case "dashboard": return "Tableau de Bord 📊 - Synthèse Filtrée";
+      case "dashboard": return "Tableau de Bord 📊 - Synthèse";
       case "client-analysis": return "Analyse Client / Période 🔍";
       case "new-sale": return "Nouvelle Opération de Vente 📝";
       case "sales": return "Historique des Ventes & Actions 📋";
       case "debts": return "Vue Dettes Clients 💰";
-      case "sales-balance": return "Bilan Global des Ventes 💰";
       case "client-report": return "Bilan Financier Client / Export 📄"; 
       case "charts": return "Analyse Graphique 📈";
-      // NOUVEAU
-      case "motif-summary": return "Bilan des Motifs ✍️";
-      case "action-history": return "Historique des Actions 📋";
       default: return "Tableau de Bord";
     }
   };
@@ -2673,40 +1812,48 @@ export default function App() {
 
   const renderPage = () => {
     switch (currentPage) {
-      case "sales-balance": 
-        return <SalesBalancePage />;
       case "client-analysis": 
         return <ClientAnalysisPage />; 
       case "new-sale":
         return <SaleForm onSaved={() => setCurrentPage("sales")} />;
       case "sales":
-        return <ReloadableSalesTable />; 
+        return <ReloadableSalesTable />;
       case "debts":
         return (
           <>
             <div className="row g-4 mb-4">
-              <div className="col-lg-6"><DebtsBoard clientName={""} loading={false} /></div>
-              <div className="col-lg-6"><CreditsBoard clientName={""} loading={false} /></div>
+              <div className="col-lg-6"><DebtsBoard /></div>
+              <div className="col-lg-6"><CreditsBoard /></div>
             </div>
-            {/* TODO: Remplacer [] par un fetch global des sales si nécessaire pour DueNotifications */}
-            <DueNotificationsPanel sales={[]} loading={true} /> 
+            <DueNotificationsPanel />
             <ReloadableSalesTable />
           </>
         );
       case "client-report": 
         return <ClientReportPage />;
       case "charts":
-        return <ChartsPage />;
-      
-      // NOUVELLES PAGES
-      case "motif-summary":
-        return <MotifSummaryPage />;
-      case "action-history":
-        return <ActionHistoryPage />;
-
+        return (
+          <>
+            <ChartsPanel />
+            <SummaryCards />
+          </>
+        );
       case "dashboard":
       default:
-        return <DashboardPage />; 
+        return (
+          <>
+            <SummaryCards />
+            <DueNotificationsPanel />
+            <ChartsPanel />
+            <div className="row g-4 mt-1">
+              <div className="col-lg-6"><DebtsBoard /></div>
+              <div className="col-lg-6"><CreditsBoard /></div>
+            </div>
+            <div className="row g-4 mt-4">
+              <div className="col-12"><ReloadableSalesTable /></div>
+            </div>
+          </>
+        );
     }
   };
 
