@@ -1,4 +1,4 @@
-// server.js (MIS À JOUR AVEC SUPER ADMIN ET EXPORT SOLDES CLIENTS)
+// server.js (MIS À JOUR AVEC LOGIQUE D'EXPORT CORRIGÉE)
 require('dotenv').config(); 
 
 const express = require('express');
@@ -656,7 +656,7 @@ app.get('/api/summary', auth, async (req,res)=>{
       totalAmount: Number(finalTotals.totalAmount.toFixed(2)), totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
       totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
       totalDebt: (totalDebtResult && totalDebtResult.totalDebt) || 0,
-      totalCredit: (totalCreditResult && totalCreditResult.totalCredit) || 0,
+      totalCredit: (totalCreditResult && Math.abs(totalCreditResult.totalCredit)) || 0, // <--- C'est ici que l'application calcule 99 940 XOF
       byFish: byFish.map(f => ({ ...f, amount: Number(f.amount.toFixed(2)), payment: Number(f.payment.toFixed(2)), balance: Number(f.balance.toFixed(2)), }))
     });
   }catch(e){ res.status(500).json({ error:e.message }); }
@@ -748,20 +748,36 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// NOUVEAU: Export Bilan Soldes Clients
+// =========================================================================
+// ================== SECTION MODIFIÉE =====================================
+// =========================================================================
+// NOUVEAU: Export Bilan Soldes Clients (LOGIQUE CORRIGÉE)
 app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
   try {
     const ownerId = new mongoose.Types.ObjectId(req.user.uid);
     
-    // 1. Agréger les balances par client
+    // 1. Agréger les balances par client (LOGIQUE CORRIGÉE)
     const balances = await Sale.aggregate([
       // Cibler uniquement les ventes du propriétaire connecté
       { $match: { owner: ownerId } },
       { 
-        // Regrouper par nom de client et sommer le solde
+        // Regrouper par nom de client
         $group: { 
           _id: "$clientName", 
-          totalBalance: { $sum: "$balance" } 
+          
+          // Somme de TOUTES les dettes (balance > 0) pour ce client
+          totalClientDebt: { 
+            $sum: { 
+              $cond: { if: { $gt: ["$balance", 0] }, then: "$balance", else: 0 } 
+            } 
+          },
+          
+          // Somme de TOUS les crédits (balance < 0) pour ce client
+          totalClientCredit: { 
+            $sum: { 
+              $cond: { if: { $lt: ["$balance", 0] }, then: "$balance", else: 0 } 
+            } 
+          }
         } 
       },
       {
@@ -769,17 +785,13 @@ app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
         $project: {
           _id: 0,
           clientName: "$_id",
-          totalBalance: { $round: ["$totalBalance", 2] },
           
-          // Si totalBalance > 0, c'est une dette client
-          totalDebt: { 
-            $cond: { if: { $gt: ["$totalBalance", 0] }, then: { $round: ["$totalBalance", 2] }, else: 0 }
-          },
+          // Appliquer l'arrondi et la valeur absolue ici
+          totalDebt: { $round: ["$totalClientDebt", 2] },
+          totalCredit: { $abs: { $round: ["$totalClientCredit", 2] } }, // Rendre le crédit positif
           
-          // Si totalBalance < 0, c'est un crédit que l'entreprise doit
-          totalCredit: {
-            $cond: { if: { $lt: ["$totalBalance", 0] }, then: { $abs: { $round: ["$totalBalance", 2] } }, else: 0 }
-          }
+          // Calculer le solde net final (Dette + Crédit (négatif))
+          totalBalance: { $round: [{ $add: ["$totalClientDebt", "$totalClientCredit"] }, 2] }
         }
       },
       // Trier par nom de client
@@ -790,7 +802,7 @@ app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Bilan Soldes Clients');
     
-    // Définir les colonnes
+    // Définir les colonnes (les clés 'key' doivent correspondre au $project)
     ws.columns = [
       { header: 'Client', key: 'clientName', width: 30 },
       { header: 'Dette Totale (Le client doit)', key: 'totalDebt', width: 25, style: { numFmt: '#,##0.00 "XOF"' } },
@@ -803,8 +815,8 @@ app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
 
     // Ajouter les lignes de données
     balances.forEach(b => {
-      // N'ajoute que les clients qui ont un solde non nul
-      if (b.totalBalance !== 0) {
+      // N'ajoute que les clients qui ont un solde non nul (ou une dette/crédit non nulle)
+      if (b.totalBalance !== 0 || b.totalDebt !== 0 || b.totalCredit !== 0) {
         ws.addRow({
           clientName: b.clientName,
           totalDebt: b.totalDebt,
@@ -816,16 +828,19 @@ app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
 
     // 3. Envoyer le fichier au client
     res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    // Le nom de fichier ici sera écrasé par celui défini dans App.js, ce qui est correct
     res.setHeader('Content-Disposition','attachment; filename="bilan_solde_clients.xlsx"');
     await wb.xlsx.write(res);
     res.end();
 
   } catch (e) {
-    console.error("Erreur lors de l'export des soldes clients:", e);
+    console.error("Erreur lors de l'export des soldes clients (corrigé):", e);
     res.status(500).json({ error: e.message });
   }
 });
+// =========================================================================
+// ================== FIN SECTION MODIFIÉE =================================
+// =========================================================================
+
 
 /* ---------------- Lancement ---------------- */
 app.listen(PORT, ()=>console.log(`API running on http://localhost:${PORT}`));
