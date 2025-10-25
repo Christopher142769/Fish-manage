@@ -1,4 +1,4 @@
-// server.js (MIS À JOUR AVEC LOGIQUE D'EXPORT CORRIGÉE)
+// server.js (COMPLET AVEC NOUVELLE ROUTE SUPER ADMIN)
 require('dotenv').config(); 
 
 const express = require('express');
@@ -319,7 +319,7 @@ app.get('/api/admin/logs-for-user/:userId', authSuperAdmin, async (req, res) => 
   }
 });
 
-// NOUVEAU: Export Excel Super Admin
+// NOUVEAU: Export Excel Super Admin (Ventes et Logs)
 app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
@@ -394,6 +394,85 @@ app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
         console.error("Erreur export super admin:", e);
         res.status(500).json({ error: e.message });
     }
+});
+
+// =========================================================================
+// NOUVELLE ROUTE : Export Bilan Soldes Clients pour un Admin (par Super Admin)
+// =========================================================================
+app.get('/api/admin/export-balances/:userId', authSuperAdmin, async (req, res) => {
+  try {
+    const ownerId = new mongoose.Types.ObjectId(req.params.userId);
+    
+    // 1. Agréger les balances par client pour l'Admin ciblé
+    const balances = await Sale.aggregate([
+      // Cibler uniquement les ventes de l'Admin ciblé
+      { $match: { owner: ownerId } },
+      { 
+        // Regrouper par nom de client
+        $group: { 
+          _id: "$clientName", 
+          
+          // Somme de TOUTES les dettes (balance > 0) pour ce client
+          totalClientDebt: { 
+            $sum: { 
+              $cond: { if: { $gt: ["$balance", 0] }, then: "$balance", else: 0 } 
+            } 
+          },
+          
+          // Somme de TOUS les crédits (balance < 0) pour ce client
+          totalClientCredit: { 
+            $sum: { 
+              $cond: { if: { $lt: ["$balance", 0] }, then: "$balance", else: 0 } 
+            } 
+          }
+        } 
+      },
+      {
+        // Mettre en forme les résultats
+        $project: {
+          _id: 0,
+          clientName: "$_id",
+          
+          // Appliquer l'arrondi et la valeur absolue ici
+          totalDebt: { $round: ["$totalClientDebt", 2] },
+          totalCredit: { $abs: { $round: ["$totalClientCredit", 2] } }, // Rendre le crédit positif
+          
+          // Calculer le solde net final (Dette + Crédit (négatif))
+          totalBalance: { $round: [{ $add: ["$totalClientDebt", "$totalClientCredit"] }, 2] }
+        }
+      },
+      // Filtrer pour n'afficher que les clients avec un solde (dette ou crédit)
+      { $match: { $or: [{ totalDebt: { $ne: 0 } }, { totalCredit: { $ne: 0 } }] } },
+      // Trier par nom de client
+      { $sort: { clientName: 1 } } 
+    ]);
+
+    // 2. Créer le fichier Excel
+    const wb = new ExcelJS.Workbook();
+    const user = await User.findById(req.params.userId);
+    const ws = wb.addWorksheet(`Soldes Clients de ${user?.companyName || 'Admin'}`);
+    
+    // Définir les colonnes
+    ws.columns = [
+      { header: 'Client', key: 'clientName', width: 30 },
+      { header: 'Dette Totale (Le client doit)', key: 'totalDebt', width: 25, style: { numFmt: '#,##0.00 "XOF"' } },
+      { header: 'Crédit Total (Nous devons au client)', key: 'totalCredit', width: 30, style: { numFmt: '#,##0.00 "XOF"' } },
+      { header: 'Solde Net (Positif = Dette Client)', key: 'totalBalance', width: 45, style: { numFmt: '#,##0.00 "XOF"' } },
+    ];
+    
+    ws.getRow(1).font = { bold: true };
+    balances.forEach(b => ws.addRow(b));
+
+    // 3. Envoyer le fichier au client
+    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition',`attachment; filename="Soldes_Clients_${user?.companyName.replace(/\s/g, '_')}_${new Date().toISOString().slice(0,10)}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+
+  } catch (e) {
+    console.error("Erreur lors de l'export des soldes clients (Super Admin):", e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 
@@ -748,9 +827,6 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// =========================================================================
-// ================== SECTION MODIFIÉE =====================================
-// =========================================================================
 // NOUVEAU: Export Bilan Soldes Clients (LOGIQUE CORRIGÉE)
 app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
   try {
@@ -837,9 +913,6 @@ app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-// =========================================================================
-// ================== FIN SECTION MODIFIÉE =================================
-// =========================================================================
 
 
 /* ---------------- Lancement ---------------- */
