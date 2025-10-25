@@ -1,4 +1,4 @@
-// App.js (MIS À JOUR AVEC BOUTON EXPORT SOLDE CLIENTS)
+// App.js (COMPLET AVEC BOUTON EXPORT SOLDES CLIENTS SUPER ADMIN)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** =====================================
@@ -72,7 +72,7 @@ function useClients() {
                 const res = await apiFetch("/api/clients");
                 const data = await res.json();
                 // Assurez-vous que data.clientName existe ou utilisez la structure de votre backend si elle a changé
-                setClients(Array.isArray(data) ? data.map(c => c.clientName).sort() : []); 
+                setClients(Array.isArray(data) ? data.sort() : []); 
             } catch (e) { console.error("Erreur chargement clients:", e); }
         })();
     }, []);
@@ -523,7 +523,8 @@ function AdminHistoryPage() {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = `Export_Admin_${selectedUserId}_${startDate}_${endDate}.xlsx`;
+            const admin = users.find(u => u._id === selectedUserId)?.companyName.replace(/\s/g, '_') || selectedUserId;
+            a.download = `Export_Admin_${admin}_${startDate}_${endDate}.xlsx`;
             document.body.appendChild(a); a.click(); a.remove();
             window.URL.revokeObjectURL(url);
         } catch (e) {
@@ -531,6 +532,38 @@ function AdminHistoryPage() {
         }
     };
     
+    // NOUVEAU: Logique d'export des Soldes Clients
+    const handleExportClientBalances = async () => {
+        if (!selectedUserId) { alert("Veuillez sélectionner un admin."); return; }
+        
+        try {
+            setLoading(true);
+            // Appel de la nouvelle route backend
+            const res = await apiFetchSuperAdmin(`/api/admin/export-balances/${selectedUserId}`, { method: "GET" });
+            
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(errorText || "Export des soldes impossible");
+            }
+            
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            const admin = users.find(u => u._id === selectedUserId)?.companyName.replace(/\s/g, '_') || selectedUserId;
+            // Nom de fichier avec le nom de l'admin
+            a.download = `Soldes_Clients_${admin}_${new Date().toISOString().slice(0,10)}.xlsx`;
+            document.body.appendChild(a); 
+            a.click(); 
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <>
             <div className="card border-0 shadow rounded-4 mb-4 bg-white">
@@ -556,8 +589,13 @@ function AdminHistoryPage() {
                             <button className="btn btn-primary w-100" onClick={handleSearch} disabled={loading || !selectedUserId}>
                                 <i className="bi bi-search"></i>
                             </button>
-                            <button className="btn btn-success w-100" onClick={handleExport} disabled={loading || !selectedUserId}>
+                            {/* BOUTON EXPORT VENTES/LOGS */}
+                            <button className="btn btn-success w-100" onClick={handleExport} disabled={loading || !selectedUserId} title="Exporter Ventes et Logs (Période)">
                                 <i className="bi bi-file-earmark-excel-fill"></i>
+                            </button>
+                            {/* NOUVEAU BOUTON EXPORT SOLDES CLIENTS */}
+                            <button className="btn btn-info w-100 text-white" onClick={handleExportClientBalances} disabled={loading || !selectedUserId} title="Exporter Soldes Clients Actuels (Dette/Crédit)">
+                                <i className="bi bi-cash-coin"></i>
                             </button>
                         </div>
                     </div>
