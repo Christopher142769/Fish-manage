@@ -1,10 +1,10 @@
-// App.js (MIS À JOUR AVEC PANNEAU SUPER ADMIN)
+// App.js (MIS À JOUR AVEC BOUTON EXPORT SOLDE CLIENTS)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** =====================================
  * CONFIG GLOBALE & HELPERS
  * ===================================== */
-const API_BASE = "https://fish-manage-back.onrender.com";
+const API_BASE = "https://fish-manage-back.onrender.com"; // Assurez-vous que cette URL est correcte
 const SIDEBAR_WIDTH = 250; // px
 const money = (n) => (n ?? 0).toLocaleString("fr-FR", { style: "currency", currency: "XOF" });
 const formatDate = (dateString) => {
@@ -71,7 +71,8 @@ function useClients() {
             try {
                 const res = await apiFetch("/api/clients");
                 const data = await res.json();
-                setClients(Array.isArray(data) ? data.sort() : []);
+                // Assurez-vous que data.clientName existe ou utilisez la structure de votre backend si elle a changé
+                setClients(Array.isArray(data) ? data.map(c => c.clientName).sort() : []); 
             } catch (e) { console.error("Erreur chargement clients:", e); }
         })();
     }, []);
@@ -1419,10 +1420,15 @@ function CreditsBoard({ clientName, loading }) {
 }
 
 function ClientReportPage() {
-  const [clients, setClients] = useState([]);
+  const clients = useClients();
   const [selectedClient, setSelectedClient] = useState("all");
   const [loading, setLoading] = useState(false);
-  useEffect(() => { (async () => { try { const res = await apiFetch("/api/clients"); const data = await res.json(); setClients(Array.isArray(data) ? data : []); } catch (e) { alert("Erreur chargement clients: " + e.message); } })(); }, []);
+  
+  useEffect(() => { 
+    // Mettre à jour la liste des clients si useClients revient avec des données
+    // L'implémentation de useClients semble déjà le faire
+  }, [clients]);
+
   const exportReport = async () => {
     setLoading(true);
     try {
@@ -1434,6 +1440,7 @@ function ClientReportPage() {
       a.download = filename; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
     } catch (e) { alert(e.message); } finally { setLoading(false); }
   };
+  
   return (
     <div className="card border-0 shadow rounded-4 mb-4 bg-white">
       <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center"><i className="bi bi-file-earmark-bar-graph-fill me-2 fs-5"></i><h5 className="m-0">Bilan Financier Client / Export</h5> </div>
@@ -1452,23 +1459,87 @@ function ClientReportPage() {
 }
 
 function SalesBalancePage() {
-  const [sum, setSum] = useState(null); const [loading, setLoading] = useState(true);
+  const [sum, setSum] = useState(null); 
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     const loadSummary = async () => {
       setLoading(true);
-      try { const res = await apiFetch("/api/summary?isGlobal=true"); const data = await res.json(); setSum(data); } 
-      catch (e) { console.error("Erreur chargement bilan:", e); setSum(null); } finally { setLoading(false); }
+      try { 
+        const res = await apiFetch("/api/summary?isGlobal=true"); 
+        const data = await res.json(); 
+        setSum(data); 
+      } 
+      catch (e) { 
+        console.error("Erreur chargement bilan:", e); 
+        setSum(null); 
+      } finally { 
+        setLoading(false); 
+      }
     };
-    loadSummary(); const handler = () => loadSummary(); window.addEventListener("reload-sales", handler); return () => window.removeEventListener("reload-sales", handler);
+    loadSummary(); 
+    const handler = () => loadSummary(); 
+    window.addEventListener("reload-sales", handler); 
+    return () => window.removeEventListener("reload-sales", handler);
   }, []);
-  if (loading) return <div className="text-center py-5 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement du Bilan Global...</div>;
-  const totalDebt = sum?.totalDebt || 0; const totalCredit = sum?.totalCredit || 0;
+
+  // NOUVEAU: Fonction pour l'export des soldes clients
+  const exportClientBalances = async () => {
+    try {
+      setLoading(true); // Optionnel, pour indiquer un chargement
+      const res = await apiFetch("/api/exports/client-balances.xlsx", { method: "GET" });
+      
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Export impossible. Erreur: ${errorText}`);
+      }
+      
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      // Utilisez un nom de fichier plus spécifique
+      a.download = `bilan_solde_clients_${new Date().toISOString().slice(0,10)}.xlsx`;
+      document.body.appendChild(a); 
+      a.click(); 
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      alert("Fichier 'bilan_solde_clients.xlsx' exporté avec succès !");
+
+    } catch (e) {
+      alert("Erreur lors de l'export du bilan des soldes: " + e.message);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+
+  if (loading && !sum) return <div className="text-center py-5 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement du Bilan Global...</div>;
+  
+  const totalDebt = sum?.totalDebt || 0; 
+  const totalCredit = sum?.totalCredit || 0;
+
   const byTilapia = sum?.byFish?.find((f) => f.fishType === "tilapia") || { amount: 0, payment: 0, balance: 0 };
   const byPanga = sum?.byFish?.find((f) => f.fishType === "pangasius") || { amount: 0, payment: 0, balance: 0 };
+  
   return (
     <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-      <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center"><i className="bi bi-file-earmark-spreadsheet-fill me-2 fs-5"></i><h5 className="m-0">Bilan Financier Global de l'Entreprise</h5></div>
+      <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center">
+        <i className="bi bi-file-earmark-spreadsheet-fill me-2 fs-5"></i>
+        <h5 className="m-0">Bilan Financier Global de l'Entreprise</h5>
+        
+        {/* NOUVEAU BOUTON D'EXPORT */}
+        <button 
+            className="btn btn-primary rounded-pill ms-auto" 
+            onClick={exportClientBalances} 
+            disabled={loading}
+        >
+            <i className="bi bi-file-earmark-excel-fill me-2"></i>
+            {loading ? "Exportation..." : "Exporter Soldes Clients"}
+        </button>
+      </div>
       <div className="card-body p-4">
+        {/* Reste du contenu de la page Bilan Global (inchangé) */}
         <p className="text-muted small">Ce bilan présente les totaux globaux (toutes périodes et tous clients confondus).</p>
         <div className="row g-4 mb-5">
             <div className="col-md-6 col-lg-3"><div className="card bg-primary text-white bg-opacity-75 shadow h-100"><div className="card-body"><div className="small text-uppercase">Total Ventes</div><h4 className="fw-bold m-0">{money(sum?.totalAmount || 0)}</h4></div></div></div>
