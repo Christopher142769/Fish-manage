@@ -1,4 +1,4 @@
-// server.js (COMPLET AVEC NOUVELLE ROUTE SUPER ADMIN)
+// server.js (COMPLET AVEC NOUVELLE ROUTE CLIENTS MANAGEMENT)
 require('dotenv').config(); 
 
 const express = require('express');
@@ -278,7 +278,7 @@ app.get('/api/admin/sales-for-user/:userId', authSuperAdmin, async (req, res) =>
     }
 });
 
-// Route CORRIGÉE
+// Route CORRIGÉE pour les logs (filtre sur la date de VENTE, pas de création du log)
 app.get('/api/admin/logs-for-user/:userId', authSuperAdmin, async (req, res) => {
   try {
       const { startDate, endDate } = req.query;
@@ -478,6 +478,126 @@ app.get('/api/admin/export-balances/:userId', authSuperAdmin, async (req, res) =
 
 /* ---------------- Routes "ADMIN" (Utilisateur normal) ---------------- */
 // (Toutes les routes ci-dessous sont inchangées et utilisent le middleware 'auth' normal)
+
+// =========================================================================
+// NOUVELLES ROUTES : GESTION CLIENTS (AJOUTÉES)
+// =========================================================================
+
+// Route pour lister tous les clients avec leur solde actuel
+app.get('/api/clients-management/balances', auth, async (req, res) => {
+    try {
+        const ownerId = new mongoose.Types.ObjectId(req.user.uid);
+        const agg = await Sale.aggregate([
+            { $match: { owner: ownerId, balance: { $ne: 0 } } },
+            { 
+                $group: { 
+                    _id: "$clientName", 
+                    totalDebt: { $sum: { $cond: { if: { $gt: ["$balance", 0] }, then: "$balance", else: 0 } } },
+                    totalCredit: { $sum: { $cond: { if: { $lt: ["$balance", 0] }, then: "$balance", else: 0 } } }
+                } 
+            },
+            { 
+                $project: { 
+                    clientName: "$_id", 
+                    totalDebt: { $round: ["$totalDebt", 2] }, 
+                    totalCredit: { $abs: { $round: ["$totalCredit", 2] } },
+                    _id: 0 
+                } 
+            },
+            { $sort: { clientName: 1 } }
+        ]);
+
+        // Récupérer tous les noms de clients (même ceux sans solde)
+        const allClients = await Sale.distinct('clientName', { owner: ownerId });
+        const clientMap = new Map(agg.map(c => [c.clientName, c]));
+        
+        // Combinez les clients avec et sans solde
+        const results = allClients.map(name => {
+            const balanceData = clientMap.get(name) || { totalDebt: 0, totalCredit: 0 };
+            return { 
+                clientName: name, 
+                totalDebt: balanceData.totalDebt, 
+                totalCredit: balanceData.totalCredit 
+            };
+        });
+
+        res.json(results);
+    } catch(e) { 
+        console.error("Erreur chargement clients management:", e);
+        res.status(500).json({ error: e.message }); 
+    }
+});
+
+// Route pour éditer/renommer un client
+app.patch('/api/clients-management/:oldName', auth, async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+        const { newName, motif } = req.body;
+        const oldName = req.params.oldName;
+        const ownerId = req.user.uid;
+
+        if (!newName || !motif || newName.trim() === '' || motif.trim() === '') {
+            await session.abortTransaction();
+            return res.status(400).json({ error: 'Nouveau nom de client et motif requis' });
+        }
+        
+        const newNameUpper = newName.toUpperCase().replace(/\s/g, '');
+        const oldNameUpper = oldName.toUpperCase().replace(/\s/g, '');
+
+        if (!/^[A-Z0-9]+$/.test(newNameUpper)) {
+            await session.abortTransaction();
+            return res.status(400).json({ error: "Le nouveau nom doit être en MAJUSCULES (A-Z, 0-9) sans espace." });
+        }
+        if (newNameUpper === oldNameUpper) {
+             await session.abortTransaction();
+             return res.status(400).json({ error: "Le nouveau nom est identique à l'ancien." });
+        }
+
+        // Vérifier si le nouveau nom est déjà pris par un autre client (en vérifiant une vente existante)
+        const existingSale = await Sale.findOne({ owner: ownerId, clientName: newNameUpper }).session(session);
+        if (existingSale && existingSale.clientName !== oldNameUpper) {
+            await session.abortTransaction();
+            return res.status(409).json({ error: `Le nom de client ${newNameUpper} est déjà utilisé.` });
+        }
+        
+        // Enregistrer l'action dans les logs
+        await ActionLog.create([{
+            owner: ownerId, companyName: req.user.companyName,
+            actionType: 'edit', 
+            motif: `Renommage client ${oldNameUpper} -> ${newNameUpper}. Motif: ${motif}`,
+            saleId: new mongoose.Types.ObjectId(), // ID factice car l'action ne cible pas une seule vente
+            saleData: { message: `Renommage client: ${oldNameUpper} -> ${newNameUpper}` } 
+        }], { session });
+
+        // Mettre à jour toutes les ventes de l'ancien client vers le nouveau
+        const updateResult = await Sale.updateMany(
+            { owner: ownerId, clientName: oldNameUpper },
+            { $set: { clientName: newNameUpper } }
+        ).session(session);
+
+        if (updateResult.modifiedCount === 0) {
+            await session.abortTransaction();
+            // On considère que le renommage a réussi si le client n'existait pas non plus dans les ventes
+            // mais l'objectif est ici de renommer des ventes existantes.
+            // Si le client n'a aucune vente, on ne fait rien.
+            // Pour l'instant, on renvoie une 404 si le client n'a pas de ventes.
+             return res.status(404).json({ error: 'Client introuvable ou aucune vente associée à mettre à jour.' });
+        }
+
+        await session.commitTransaction();
+        res.json({ message: `Client ${oldNameUpper} renommé en ${newNameUpper} dans ${updateResult.modifiedCount} ventes.` });
+    } catch(e) {
+        await session.abortTransaction();
+        res.status(400).json({ error: e.message });
+    } finally {
+        session.endSession();
+    }
+});
+
+// =========================================================================
+// FIN DES NOUVELLES ROUTES GESTION CLIENTS
+// =========================================================================
 
 app.get('/api/action-logs', auth, async (req, res) => {
     try {
@@ -735,7 +855,7 @@ app.get('/api/summary', auth, async (req,res)=>{
       totalAmount: Number(finalTotals.totalAmount.toFixed(2)), totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
       totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
       totalDebt: (totalDebtResult && totalDebtResult.totalDebt) || 0,
-      totalCredit: (totalCreditResult && Math.abs(totalCreditResult.totalCredit)) || 0, // <--- C'est ici que l'application calcule 99 940 XOF
+      totalCredit: (totalCreditResult && Math.abs(totalCreditResult.totalCredit)) || 0,
       byFish: byFish.map(f => ({ ...f, amount: Number(f.amount.toFixed(2)), payment: Number(f.payment.toFixed(2)), balance: Number(f.balance.toFixed(2)), }))
     });
   }catch(e){ res.status(500).json({ error:e.message }); }
