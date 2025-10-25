@@ -456,7 +456,7 @@ app.get('/api/admin/export-balances/:userId', authSuperAdmin, async (req, res) =
     ws.columns = [
       { header: 'Client', key: 'clientName', width: 30 },
       { header: 'Dette Totale (Le client doit)', key: 'totalDebt', width: 25, style: { numFmt: '#,##0.00 "XOF"' } },
-      { header: 'Crédit Total (Nous devons au client)', key: 'totalCredit', width: 30, style: { numFmt: '#,##0.00 "XOF"' } },
+      { header: 'Crédit Totale (Nous devons au client)', key: 'totalCredit', width: 30, style: { numFmt: '#,##0.00 "XOF"' } },
       { header: 'Solde Net (Positif = Dette Client)', key: 'totalBalance', width: 45, style: { numFmt: '#,##0.00 "XOF"' } },
     ];
     
