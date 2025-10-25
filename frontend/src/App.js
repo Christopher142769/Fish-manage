@@ -1,4 +1,4 @@
-// App.js (COMPLET AVEC BOUTON EXPORT SOLDES CLIENTS SUPER ADMIN)
+// App.js (COMPLET AVEC GESTION CLIENTS et LOGIQUE NEW-SALE)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** =====================================
@@ -63,19 +63,25 @@ function useChartJs() {
   return ready;
 }
 
-// Hook pour l'app "Admin"
+// Hook pour l'app "Admin" (MIS À JOUR AVEC ÉCOUTE D'ÉVÉNEMENT)
 function useClients() {
     const [clients, setClients] = useState([]);
-    useEffect(() => {
-        (async () => {
-            try {
-                const res = await apiFetch("/api/clients");
-                const data = await res.json();
-                // Assurez-vous que data.clientName existe ou utilisez la structure de votre backend si elle a changé
-                setClients(Array.isArray(data) ? data.sort() : []); 
-            } catch (e) { console.error("Erreur chargement clients:", e); }
-        })();
+    
+    const loadClients = async () => { // Extrait la logique dans une fonction
+        try {
+            const res = await apiFetch("/api/clients");
+            const data = await res.json();
+            setClients(Array.isArray(data) ? data.sort() : []); 
+        } catch (e) { console.error("Erreur chargement clients:", e); }
+    };
+    
+    useEffect(() => { 
+        loadClients(); 
+        const handler = () => loadClients(); // Gère l'événement personnalisé
+        window.addEventListener("reload-clients", handler); 
+        return () => window.removeEventListener("reload-clients", handler);
     }, []);
+    
     return clients;
 }
 
@@ -731,18 +737,18 @@ function AdminApp() {
  * #####################################################################################
  * ###                                                                               ###
  * ###                    APPLICATION "ADMIN" (UTILISATEUR NORMAL)                   ###
- * ###                      (Code précédent, presque inchangé)                       ###
  * ###                                                                               ###
  * #####################################################################################
  * ##################################################################################### */
 
 // =====================================
-// ADMIN/USER: Sidebar + Topbar
+// ADMIN/USER: Sidebar + Topbar (MIS À JOUR)
 // =====================================
 function Sidebar({ companyName, currentPage, onNavigate, onLogout, open, setOpen, isMdUp }) {
   const navItems = [
     { id: "dashboard", icon: "bi-house-door-fill", label: "Dashboard" },
     { id: "client-analysis", icon: "bi-search", label: "Analyse Client" }, 
+    { id: "client-management", icon: "bi-people-fill", label: "Gestion Clients" }, // AJOUTÉ
     { id: "new-sale", icon: "bi-cash-coin", label: "Nouvelle Vente" },
     { id: "sales", icon: "bi-table", label: "Historique & Actions" },
     { id: "debts", icon: "bi-exclamation-triangle-fill", label: "Dettes Clients" },
@@ -910,10 +916,13 @@ function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
     );
 }
 
+// SaleForm (MIS À JOUR AVEC SÉLECTION/SAISIE CLIENT FORCÉE)
 function SaleForm({ onSaved }) {
+    const clients = useClients(); // UTILISE LE HOOK
     const [formData, setFormData] = useState({ fishType: 'tilapia', quantity: '', delivered: '', unitPrice: '', payment: '', observation: '' });
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-    const [clientName, setClient] = useState("");
+    const [clientName, setClient] = useState(""); // Sera le client sélectionné ou le nouveau client
+    const [isNewClient, setIsNewClient] = useState(false); // NOUVEAU: Pour gérer la création vs sélection
     const [loading, setLoading] = useState(false);
     
     const amount = (Number(formData.quantity || 0) * Number(formData.unitPrice || 0)) || 0;
@@ -924,15 +933,36 @@ function SaleForm({ onSaved }) {
         e.preventDefault(); setLoading(true);
         try {
             const clientUpper = clientName.toUpperCase();
-            if (!validateClientName(clientUpper)) throw new Error("Le nom du client doit être en MAJUSCULES (A-Z, 0-9) sans espace/caractère spécial. Ex: ENTREPRISEA1");
+            if (isNewClient && !validateClientName(clientUpper)) throw new Error("Le nom du client doit être en MAJUSCULES (A-Z, 0-9) sans espace/caractère spécial. Ex: ENTREPRISEA1");
+            if (!clientUpper) throw new Error("Veuillez sélectionner ou saisir un nom de client."); // Double vérification
+            
             const q = Number(formData.quantity || 0); const u = Number(formData.unitPrice || 0);
             if (q <= 0) throw new Error("La quantité commandée doit être positive.");
             if (u <= 0) throw new Error("Le prix unitaire doit être positif.");
-            const res = await apiFetch("/api/sales", { method: "POST", body: JSON.stringify({ date, clientName: clientUpper, ...formData, quantity: q, unitPrice: u, delivered: Number(formData.delivered || 0), payment: Number(formData.payment || 0) }), });
-            const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur");
+            
+            const res = await apiFetch("/api/sales", { 
+                method: "POST", 
+                body: JSON.stringify({ 
+                    date, clientName: clientUpper, 
+                    ...formData, 
+                    quantity: q, 
+                    unitPrice: u, 
+                    delivered: Number(formData.delivered || 0), 
+                    payment: Number(formData.payment || 0) 
+                }), 
+            });
+            const data = await res.json(); 
+            if (!res.ok) throw new Error(data.error || "Erreur");
+            
+            // Réinitialisation après succès
             setClient(""); setFormData({fishType: 'tilapia', quantity: '', delivered: '', unitPrice: '', payment: '', observation: ''});
-            onSaved && onSaved(data); window.dispatchEvent(new Event("reload-sales")); 
-        } catch (err) { alert(err.message); }
+            setIsNewClient(false); // On revient à la sélection
+            onSaved && onSaved(data); 
+            window.dispatchEvent(new Event("reload-sales")); 
+            window.dispatchEvent(new Event("reload-clients")); // Mettre à jour la liste des clients partout
+        } catch (err) { 
+            alert(err.message); 
+        }
         finally { setLoading(false); }
     };
 
@@ -941,24 +971,62 @@ function SaleForm({ onSaved }) {
             <div className="card-header bg-primary text-white rounded-top-4 p-3 d-flex align-items-center"><i className="bi bi-bag-plus-fill me-2 fs-5"></i><h5 className="m-0">Nouvelle Vente Rapide</h5></div>
             <div className="card-body p-4">
                 <form onSubmit={save} className="row g-3">
-                    <div className="col-12">
-                        <label className="form-label small fw-semibold">Client / Entreprise (MAJUSCULES SANS ESPACE)</label>
-                        <input className="form-control" value={clientName} onChange={(e) => setClient(e.target.value.toUpperCase().replace(/\s/g, ''))} pattern="^[A-Z0-9]+$" title="Uniquement des lettres majuscules (A-Z) et des chiffres (0-9). Pas d'espaces." required />
-                         <div className="small text-muted mt-1">Ex: ENTREPRISEB ou DUPONT34</div>
+                    {/* SÉLECTION/SAISIE DU CLIENT - NOUVELLE LOGIQUE */}
+                    <div className="col-12 mb-4 p-3 bg-light rounded-3 border">
+                        <label className="form-label small fw-semibold">Client / Entreprise</label>
+                        {!isNewClient ? (
+                            <select 
+                                className="form-select form-select-lg" 
+                                value={clientName} 
+                                onChange={(e) => { 
+                                    if (e.target.value === 'NEW') setIsNewClient(true);
+                                    else setClient(e.target.value);
+                                }} 
+                                required
+                            >
+                                <option value="" disabled>-- Sélectionner un client --</option>
+                                {clients.map(client => <option key={client} value={client}>{client}</option>)}
+                                <option value="NEW">-- Nouveau Client --</option>
+                            </select>
+                        ) : (
+                            <div className="input-group">
+                                <input 
+                                    className="form-control form-control-lg" 
+                                    value={clientName} 
+                                    onChange={(e) => setClient(e.target.value.toUpperCase().replace(/\s/g, ''))} 
+                                    pattern="^[A-Z0-9]+$" 
+                                    title="Uniquement des lettres majuscules (A-Z) et des chiffres (0-9). Pas d'espaces." 
+                                    placeholder="ENTREPRISEB" 
+                                    required
+                                />
+                                <button type="button" className="btn btn-outline-secondary" onClick={() => { setIsNewClient(false); setClient(""); }}>Annuler</button>
+                            </div>
+                        )}
+                        {(isNewClient && clientName) ? (
+                            <div className="small text-danger mt-1">Nouveau client : **{clientName}** sera créé.</div>
+                        ) : (
+                            <div className="small text-muted mt-1">Ex: ENTREPRISEB ou DUPONT34.</div>
+                        )}
                     </div>
-                    <div className="col-6 col-sm-6 col-md-6 col-lg-3">
-                        <label className="form-label small fw-semibold">Date</label>
-                        <input type="date" className="form-control" value={date} onChange={(e) => setDate(e.target.value)} required />
-                    </div>
-                    <div className="col-12"><SaleFormBody data={formData} setData={setFormData} isEdit={false} /></div>
-                    <div className="col-12 d-grid gap-2 mt-4">
-                        <button className="btn btn-primary btn-lg rounded-pill" disabled={loading}><i className={`bi ${loading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>{loading ? "Enregistrement..." : "Enregistrer la Vente"}</button>
-                    </div>
-                    <div className="col-12 d-flex justify-content-between flex-wrap pt-3 mt-3 border-top">
-                        <span className="badge bg-secondary p-2">Montant: <strong className="fs-6">{money(amount)}</strong></span>
-                        <span className="badge bg-warning text-dark p-2">Reste à livrer: <strong className="fs-6">{remainingToDeliver} kg</strong></span>
-                        <span className={`badge ${balance > 0 ? 'bg-danger' : 'bg-success'} p-2`}>{balance > 0 ? "Solde à payer" : "Crédit Client"}: <strong className="fs-6">{money(Math.abs(balance))}</strong></span>
-                    </div>
+
+                    {clientName && ( // Le reste du formulaire n'apparaît que si un client est sélectionné/saisi
+                        <>
+                            <div className="col-6 col-sm-6 col-md-6 col-lg-3">
+                                <label className="form-label small fw-semibold">Date</label>
+                                <input type="date" className="form-control" value={date} onChange={(e) => setDate(e.target.value)} required />
+                            </div>
+                            <div className="col-12"><SaleFormBody data={formData} setData={setFormData} isEdit={false} /></div>
+                            <div className="col-12 d-grid gap-2 mt-4">
+                                <button className="btn btn-primary btn-lg rounded-pill" disabled={loading}><i className={`bi ${loading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>{loading ? "Enregistrement..." : "Enregistrer la Vente"}</button>
+                            </div>
+                            <div className="col-12 d-flex justify-content-between flex-wrap pt-3 mt-3 border-top">
+                                <span className="badge bg-secondary p-2">Montant: <strong className="fs-6">{money(amount)}</strong></span>
+                                <span className="badge bg-warning text-dark p-2">Reste à livrer: <strong className="fs-6">{remainingToDeliver} kg</strong></span>
+                                <span className={`badge ${balance > 0 ? 'bg-danger' : 'bg-success'} p-2`}>{balance > 0 ? "Solde à payer" : "Crédit Client"}: <strong className="fs-6">{money(Math.abs(balance))}</strong></span>
+                            </div>
+                        </>
+                    )}
+                    
                 </form>
             </div>
         </div>
@@ -1074,8 +1142,40 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
                             <li className="nav-item"><button className={`nav-link ${useType === 'new-sale' ? 'active' : ''}`} onClick={() => setUseType('new-sale')}><i className="bi bi-bag-fill me-2"></i> Utilisation sur Nouvelle Vente</button></li>
                             <li className="nav-item"><button className={`nav-link ${useType === 'compensate' ? 'active' : ''}`} onClick={() => setUseType('compensate')}><i className="bi bi-arrow-left-right me-2"></i> Solder les Dettes</button></li>
                         </ul>
-                        {useType === 'refund' && (<form onSubmit={(e) => { e.preventDefault(); handleRefund(); }}><div className="mb-3"><label className="form-label fw-semibold">Montant à Rembourser</label><input type="number" step="0.01" className="form-control form-control-lg" value={amount} onChange={(e) => setAmount(e.target.value)} min="0.01" max={creditAvailable} required /><small className="text-muted">Max : {money(creditAvailable)}</small></div><div className="d-grid mt-4"><button type="submit" className="btn btn-success btn-lg" disabled={loading}><i className={`bi ${loading ? "bi-hourglass-split" : "bi-cash-coin"} me-2`}></i>{loading ? "Traitement..." : "Confirmer le Remboursement"}</button></div></form>)}
-                        {useType === 'new-sale' && (<form onSubmit={(e) => { e.preventDefault(); handleNewSale(); }}><div className="alert alert-info small">Enregistrez une nouvelle vente. Le crédit NE sera PAS appliqué automatiquement. Vous devrez utiliser l'onglet "Solder les Dettes" après l'enregistrement.</div><SaleFormBody data={newSaleFormData} setData={setNewSaleFormData} disabled={false} isEdit={false} /> <div className="alert alert-warning small text-center mt-3">Montant de la nouvelle vente (Dette créée) : <strong className="fs-5 ms-2">{money(Number(newSaleFormData.quantity || 0) * Number(newSaleFormData.unitPrice || 0))}</strong></div><div className="d-grid mt-4"><button type="submit" className="btn btn-secondary btn-lg" disabled={loading}><i className={`bi ${loading ? "bi-hourglass-split" : "bi-check2-circle"} me-2`}></i>{loading ? "Traitement..." : "Confirmer la Création de Vente"}</button></div></form>)}
+                        
+                        {useType === 'refund' && (
+                            <form onSubmit={(e) => { e.preventDefault(); handleRefund(); }}>
+                                <div className="mb-3">
+                                    <label className="form-label fw-semibold">Montant à Rembourser</label>
+                                    <input type="number" step="0.01" className="form-control form-control-lg" value={amount} onChange={(e) => setAmount(e.target.value)} min="0.01" max={creditAvailable} required />
+                                    <small className="text-muted">Max : {money(creditAvailable)}</small>
+                                </div>
+                                <div className="d-grid mt-4">
+                                    <button type="submit" className="btn btn-success btn-lg" disabled={loading}>
+                                        <i className={`bi ${loading ? "bi-hourglass-split" : "bi-cash-coin"} me-2`}></i>
+                                        {loading ? "Traitement..." : "Confirmer le Remboursement"}
+                                    </button>
+                                </div>
+                            </form>
+                        )}
+                        
+                        {useType === 'new-sale' && (
+                            <form onSubmit={(e) => { e.preventDefault(); handleNewSale(); }}>
+                                <div className="alert alert-info small">Enregistrez une nouvelle vente. Le crédit NE sera PAS appliqué automatiquement. Vous devrez utiliser l'onglet "Solder les Dettes" après l'enregistrement.</div>
+                                <SaleFormBody data={newSaleFormData} setData={setNewSaleFormData} disabled={false} isEdit={false} /> 
+                                <div className="alert alert-warning small text-center mt-3">
+                                    Montant de la nouvelle vente (Dette créée) : 
+                                    <strong className="fs-5 ms-2">{money(Number(newSaleFormData.quantity || 0) * Number(newSaleFormData.unitPrice || 0))}</strong>
+                                </div>
+                                <div className="d-grid mt-4">
+                                    <button type="submit" className="btn btn-secondary btn-lg" disabled={loading}>
+                                        <i className={`bi ${loading ? "bi-hourglass-split" : "bi-check2-circle"} me-2`}></i>
+                                        {loading ? "Traitement..." : "Confirmer la Création de Vente"}
+                                    </button>
+                                </div>
+                            </form>
+                        )}
+                        
                         {useType === 'compensate' && (<ManualCompensationForm creditSale={sale} creditAvailable={creditAvailable} setLoading={setLoading} onCompensationSuccess={onManualCompensationSuccess} />)}
                     </div>
                 </div>
@@ -1083,7 +1183,6 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
         </div>
     );
 }
-
 function EditSaleModal({ sale, onClose, onSaveSuccess }) {
     const [formData, setFormData] = useState({ ...sale, date: formatDate(sale.date) });
     const [motif, setMotif] = useState("");
@@ -1175,6 +1274,152 @@ function DeleteMotifModal({ sale, onClose, onDeleteSuccess }) {
 // =====================================
 // ADMIN/USER: Composants de Page
 // =====================================
+
+// NOUVEAU: Modale d'édition de client (Nom)
+function EditClientModal({ clientName, onClose, onSaveSuccess }) {
+    const [newName, setNewName] = useState(clientName);
+    const [motif, setMotif] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault(); 
+        if (motif.trim() === "") { alert("Le motif de la modification est obligatoire."); return; }
+        // Vérifie si le nom a réellement changé
+        if (newName.toUpperCase().replace(/\s/g, '') === clientName) { alert("Le nouveau nom est identique à l'ancien."); return; }
+        setLoading(true);
+        try {
+            const newNameUpper = newName.toUpperCase().replace(/\s/g, '');
+            if (!validateClientName(newNameUpper)) throw new Error("Le nouveau nom doit être en MAJUSCULES (A-Z, 0-9) sans espace/caractère spécial.");
+            
+            // Note: La route encode oldName car il peut contenir des caractères spéciaux si non normalisé initialement.
+            const res = await apiFetch(`/api/clients-management/${encodeURIComponent(clientName)}`, { 
+                method: "PATCH", 
+                body: JSON.stringify({ newName: newNameUpper, motif }) 
+            });
+            const data = await res.json(); 
+            if (!res.ok) throw new Error(data.error || "Erreur lors de la mise à jour du client");
+            
+            alert(`Client "${clientName}" renommé en "${newNameUpper}" avec succès.`); 
+            onSaveSuccess();
+        } catch (e) { 
+            alert(e.message); 
+        } finally { 
+            setLoading(false); 
+        }
+    };
+
+    return (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog modal-dialog-centered">
+                <div className="modal-content">
+                    <form onSubmit={handleSubmit}>
+                        <div className="modal-header bg-warning text-dark"><h5 className="modal-title">Renommer le Client : {clientName}</h5><button type="button" className="btn-close" onClick={onClose} disabled={loading}></button></div>
+                        <div className="modal-body">
+                            <div className="mb-3">
+                                <label className="form-label fw-semibold">Nouveau Nom (MAJUSCULES SANS ESPACE)</label>
+                                <input className="form-control" value={newName} onChange={(e) => setNewName(e.target.value)} pattern="^[A-Z0-9]+$" title="Uniquement des lettres majuscules (A-Z) et des chiffres (0-9)." required disabled={loading} />
+                            </div>
+                            <div className="mb-3">
+                                <label htmlFor="motifEditClient" className="form-label fw-semibold text-danger">Motif du Renommage (Obligatoire)</label>
+                                <textarea id="motifEditClient" className="form-control" rows="3" value={motif} onChange={(e) => setMotif(e.target.value)} required disabled={loading} placeholder="Ex: Correction d'une faute de frappe, changement de raison sociale..."></textarea>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Annuler</button>
+                            <button type="submit" className="btn btn-warning" disabled={loading || motif.trim() === "" || newName.toUpperCase().replace(/\s/g, '') === clientName}><i className={`bi ${loading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>{loading ? "Sauvegarde..." : "Renommer le Client"}</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// NOUVEAU: Page de Gestion des Clients
+function ClientManagementPage() {
+    const [clients, setClients] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [clientToEditName, setClientToEditName] = useState(null); // Utilisé pour stocker le nom du client à renommer
+
+    const loadClients = async () => {
+        setLoading(true);
+        try {
+            // Utiliser la nouvelle route pour la liste complète avec les soldes
+            const res = await apiFetch("/api/clients-management/balances");
+            const data = await res.json();
+            setClients(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.error("Erreur chargement clients management:", e);
+            setClients([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => { loadClients(); }, []);
+
+    const handleEditSuccess = () => {
+        setClientToEditName(null); 
+        loadClients(); // Recharger la liste après un renommage
+        // Dispatch un événement pour recharger d'autres vues (comme les listes déroulantes de clients)
+        window.dispatchEvent(new Event("reload-clients")); 
+    };
+    
+    return (
+        <div className="card border-0 shadow rounded-4 mb-4 bg-white">
+            {clientToEditName && <EditClientModal clientName={clientToEditName} onClose={() => setClientToEditName(null)} onSaveSuccess={handleEditSuccess} />}
+            <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center">
+                <i className="bi bi-people-fill me-2 fs-5"></i>
+                <h5 className="m-0">Gestion & Historique des Clients</h5>
+            </div>
+            <div className="card-body p-4">
+                <p className="text-muted">Liste de tous les clients ayant effectué au moins une opération, avec leur solde actuel.</p>
+
+                <div className="table-responsive">
+                    <table className="table align-middle table-hover">
+                        <thead className="table-dark">
+                            <tr>
+                                <th>Client</th>
+                                <th>Dette Totale</th>
+                                <th>Crédit Total</th>
+                                <th>Solde Net</th>
+                                <th style={{ width: 100 }}>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {loading && <tr><td colSpan="5" className="text-center py-4 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...</td></tr>}
+                            {!loading && clients.length === 0 && <tr><td colSpan="5" className="text-center py-4 text-muted">Aucun client trouvé.</td></tr>}
+                            {clients.map(client => {
+                                const netBalance = client.totalDebt - client.totalCredit;
+                                return (
+                                    <tr key={client.clientName} className={netBalance > 0 ? 'table-danger-subtle' : (netBalance < 0 ? 'table-success-subtle' : '')}>
+                                        <td className="fw-semibold">{client.clientName}</td>
+                                        <td className="text-danger">{money(client.totalDebt)}</td>
+                                        <td className="text-success">{money(client.totalCredit)}</td>
+                                        <td className={`fw-bold ${netBalance > 0 ? 'text-danger' : (netBalance < 0 ? 'text-success' : 'text-dark')}`}>
+                                            {money(Math.abs(netBalance))} {netBalance < 0 && <span className="small">(Crédit)</span>}
+                                        </td>
+                                        <td>
+                                            <button className="btn btn-sm btn-outline-warning rounded-circle" title="Renommer le client" onClick={() => setClientToEditName(client.clientName)}>
+                                                <i className="bi bi-pencil-fill"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div className="alert alert-info small mt-4">
+                    **Note :** L'ajout de clients se fait automatiquement par l'enregistrement d'une nouvelle vente. L'action ici permet de renommer un client existant, ce qui met à jour l'historique complet des ventes de ce client.
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
 function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
   const [sales, setSales] = useState([]);
   const [filterType, setFilterType] = useState("");
@@ -1418,7 +1663,7 @@ function SummaryCards({ sum, loading }) {
       <Card title="Dettes Clients (Actuelles)" amount={totalDebt} iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
       <Card title="Crédits Dûs (Entreprise)" amount={totalCredit} iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" />
       <div className="col-12 col-md-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body"><div className="d-flex justify-content-between align-items-center"><h6 className="m-0 fw-bold">Détail Tilapia</h6><BadgeFish type="tilapia" /></div><hr /><div className="row small text-muted"><div className="col-4">Ventes: <br /><strong className="text-primary">{money(byTilapia.amount)}</strong></div><div className="col-4">Payé: <br /><strong className="text-success">{money(byTilapia.payment)}</strong></div><div className="col-4">{byTilapia.balance >= 0 ? "Solde Net:" : "Crédit Net:"} <br /><strong className={byTilapia.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byTilapia.balance))}</strong></div></div></div></div></div>
-      <div className="col-12 col-md-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body"><div className="d-flex justify-content-between align-items-center"><h6 className="m-0 fw-bold">Détail Pangasius</h6><BadgeFish type="pangasius" /></div><hr /><div className="row small text-muted"><div className="col-4">Ventes: <br /><strong className="text-primary">{money(byPanga.amount)}</strong></div><div className="col-4">Payé: <br /><strong className="text-success">{money(byPanga.payment)}</strong></div><div className="col-4">{byPanga.balance >= 0 ? "Solde Net:" : "Crédit Net:"} <br /><strong className={byPanga.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byPanga.balance))}</strong></div></div></div></div></div>
+      <div className="col-12 col-md-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body"><div className="d-flex justify-content-between align-items-center"><h6 className="m-0 fw-bold">Pangasius</h6><BadgeFish type="pangasius" /></div><hr /><div className="row small text-muted"><div className="col-4">Ventes: <br /><strong className="text-primary">{money(byPanga.amount)}</strong></div><div className="col-4">Payé: <br /><strong className="text-success">{money(byPanga.payment)}</strong></div><div className="col-4">{byPanga.balance >= 0 ? "Solde Net:" : "Crédit Net:"} <br /><strong className={byPanga.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byPanga.balance))}</strong></div></div></div></div></div>
     </div>
   );
 }
@@ -1727,8 +1972,17 @@ function MotifSummaryPage() {
     useEffect(() => {
         const loadLogs = async () => {
             setLoading(true);
-            try { const res = await apiFetch("/api/action-logs"); const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur chargement logs"); setLogs(Array.isArray(data) ? data : []); } 
-            catch (e) { alert(e.message); setLogs([]); } finally { setLoading(false); }
+            try { 
+                const res = await apiFetch("/api/action-logs"); 
+                const data = await res.json(); 
+                if (!res.ok) throw new Error(data.error || "Erreur chargement logs"); 
+                setLogs(Array.isArray(data) ? data : []); 
+            } 
+            catch (e) { 
+                alert(e.message); setLogs([]); 
+            } finally { 
+                setLoading(false); 
+            }
         }; loadLogs();
     }, []);
     return (
@@ -1784,7 +2038,7 @@ function ActionHistoryPage() {
 }
 
 // =====================================
-// ADMIN/USER: App Principale
+// ADMIN/USER: App Principale (MIS À JOUR)
 // =====================================
 function App() {
   const { isMdUp } = useViewport();
@@ -1802,6 +2056,7 @@ function App() {
     switch (page) {
       case "dashboard": return "Tableau de Bord 📊";
       case "client-analysis": return "Analyse Client / Période 🔍";
+      case "client-management": return "Gestion des Clients 👥"; // AJOUTÉ
       case "new-sale": return "Nouvelle Vente 📝";
       case "sales": return "Historique des Ventes 📋";
       case "debts": return "Vue Dettes Clients 💰";
@@ -1820,6 +2075,7 @@ function App() {
     switch (currentPage) {
       case "sales-balance": return <SalesBalancePage />;
       case "client-analysis": return <ClientAnalysisPage />; 
+      case "client-management": return <ClientManagementPage />; // AJOUTÉ
       case "new-sale": return <SaleForm onSaved={() => setCurrentPage("sales")} />;
       case "sales": return <ReloadableSalesTable />; 
       case "debts": return (<><div className="row g-4 mb-4"><div className="col-lg-6"><DebtsBoard clientName={""} loading={false} /></div><div className="col-lg-6"><CreditsBoard clientName={""} loading={false} /></div></div><ReloadableSalesTable /></>);
