@@ -1,4 +1,4 @@
-// server.js (COMPLET AVEC NOUVELLE ROUTE CLIENTS MANAGEMENT)
+// server.js (COMPLET AVEC GESTION MULTI-PRODUITS)
 require('dotenv').config(); 
 
 const express = require('express');
@@ -34,17 +34,41 @@ const MONGO_URI  = process.env.MONGO_URI  || 'mongodb://localhost:27017/poisson'
 const DB_NAME    = process.env.DB_NAME    || 'poisson';
 const PORT       = Number(process.env.PORT) || 4000;
 
-// NOUVEAU: Identifiants Super Admin (à mettre dans .env en production)
 const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || 'super@admin.com';
 const SUPER_ADMIN_PASS = process.env.SUPER_ADMIN_PASS || 'superadmin123';
 
 mongoose.connect(MONGO_URI, { dbName: DB_NAME })
-  .then(() => console.log(`MongoDB connected (db: ${DB_NAME})`))
+  .then(() => {
+      console.log(`MongoDB connected (db: ${DB_NAME})`);
+      // NOUVEAU: Seed initial products
+      seedInitialProducts();
+  })
   .catch(err => { console.error('MongoDB error:', err.message); process.exit(1); });
+
+// NOUVEAU: Seeder function
+async function seedInitialProducts() {
+    try {
+        const products = [
+            { name: 'Tilapia', isGlobal: true },
+            { name: 'Pangasius', isGlobal: true },
+        ];
+        // Utilise le modèle 'Product' qui sera défini ci-dessous
+        for (const prod of products) {
+            await Product.updateOne(
+                { name: prod.name, isGlobal: true },
+                { $setOnInsert: prod },
+                { upsert: true }
+            );
+        }
+        console.log('Global products seeded.');
+    } catch (e) {
+        console.error('Error seeding products:', e.message);
+    }
+}
 
 app.get('/', (_req, res) => res.type('text/plain').send('OK'));
 
-/* ---------------- Modèles (inchangés) ---------------- */
+/* ---------------- Modèles ---------------- */
 const userSchema = new mongoose.Schema({
   companyName: { type: String, required: true },
   email:       { type: String, required: true, unique: true, index: true },
@@ -55,7 +79,8 @@ const saleSchema = new mongoose.Schema({
   owner:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   date:        { type: Date, required: true },
   clientName:  { type: String, required: true, index: true },
-  fishType:    { type: String, enum: ['tilapia', 'pangasius'], required: true, index: true },
+  // MODIFIÉ: Enum supprimée pour permettre les produits personnalisés
+  fishType:    { type: String, required: true, index: true },
   quantity:    { type: Number, required: true, min: 0 }, 
   delivered:   { type: Number, default: 0, min: 0 },     
   unitPrice:   { type: Number, required: true, min: 0 },
@@ -87,9 +112,25 @@ const actionLogSchema = new mongoose.Schema({
     saleData: { type: Object, required: true } 
 }, { timestamps: true });
 
+// NOUVEAU: Modèle Product
+const productSchema = new mongoose.Schema({
+  // Si isGlobal = true, owner est null.
+  // Si isGlobal = false, owner est l'ID de l'admin/entreprise
+  owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, sparse: true }, 
+  name: { type: String, required: true, trim: true },
+  isGlobal: { type: Boolean, default: false, index: true },
+}, { timestamps: true });
+
+// Unicité: Un admin ne peut pas avoir deux produits du même nom
+productSchema.index({ owner: 1, name: 1 }, { unique: true, sparse: true }); 
+// Unicité: Les produits globaux doivent avoir un nom unique
+productSchema.index({ name: 1, isGlobal: 1 }, { unique: true, sparse: true, partialFilterExpression: { isGlobal: true } });
+
+
 const User = mongoose.model('User', userSchema);
 const Sale = mongoose.model('Sale', saleSchema);
 const ActionLog = mongoose.model('ActionLog', actionLogSchema);
+const Product = mongoose.model('Product', productSchema); // NOUVEAU
 
 /* ---------------- Middlewares d'Authentification ---------------- */
 
@@ -104,7 +145,7 @@ function auth(req,res,next){
   }catch(e){ return res.status(401).json({ error:'Token invalide' }); }
 }
 
-// NOUVEAU: Middleware pour "Super Admin"
+// Middleware pour "Super Admin"
 function authSuperAdmin(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ')? header.slice(7): null;
@@ -142,11 +183,10 @@ app.post('/api/auth/login', async (req,res)=>{
 
 /* ---------------- NOUVELLES ROUTES SUPER ADMIN ---------------- */
 
-// NOUVEAU: Login Super Admin
+// Login Super Admin
 app.post('/api/admin/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-        // Vérification des identifiants hardcodés
         if (email === SUPER_ADMIN_EMAIL && password === SUPER_ADMIN_PASS) {
             const token = jwt.sign({ email: email, role: 'superadmin' }, JWT_SECRET, { expiresIn: '1d' });
             return res.json({ token });
@@ -157,7 +197,7 @@ app.post('/api/admin/login', async (req, res) => {
     }
 });
 
-// NOUVEAU: CRUD pour les "Admins" (Comptes User)
+// CRUD pour les "Admins" (Comptes User)
 app.get('/api/admin/users', authSuperAdmin, async (req, res) => {
     const users = await User.find().select('companyName email createdAt').sort({ createdAt: -1 });
     res.json(users);
@@ -200,6 +240,7 @@ app.delete('/api/admin/users/:id', authSuperAdmin, async (req, res) => {
         // Suppression en cascade
         await Sale.deleteMany({ owner: userId }).session(session);
         await ActionLog.deleteMany({ owner: userId }).session(session);
+        await Product.deleteMany({ owner: userId }).session(session); // NOUVEAU: Supprimer les produits de l'admin
         const deletedUser = await User.findByIdAndDelete(userId).session(session);
         
         if (!deletedUser) {
@@ -217,9 +258,92 @@ app.delete('/api/admin/users/:id', authSuperAdmin, async (req, res) => {
     }
 });
 
-// NOUVEAU: Routes "Vue" Super Admin
-// (Reprise des routes normales, mais en ciblant un userId)
+// NOUVEAU: CRUD pour les "Produits" par Super Admin
+app.get('/api/admin/products', authSuperAdmin, async (req, res) => {
+    // Renvoie tous les produits, en peuplant le propriétaire pour l'affichage
+    const products = await Product.find().populate('owner', 'companyName email').sort({ isGlobal: -1, name: 1 });
+    res.json(products);
+});
 
+app.get('/api/admin/products/user/:userId', authSuperAdmin, async (req, res) => {
+    // Renvoie les produits disponibles pour un utilisateur spécifique (globaux + les siens)
+    const products = await Product.find({
+        $or: [
+            { isGlobal: true },
+            { owner: req.params.userId }
+        ]
+    }).sort({ name: 1 });
+    res.json(products.map(p => p.name));
+});
+
+app.post('/api/admin/products', authSuperAdmin, async (req, res) => {
+    try {
+        const { name, ownerId, isGlobal } = req.body;
+        if (!name) return res.status(400).json({ error: 'Nom requis' });
+
+        const newProductData = { name: name.trim(), isGlobal: !!isGlobal };
+        
+        if (isGlobal) {
+            newProductData.owner = undefined; // Les produits globaux n'ont pas de propriétaire
+        } else if (ownerId) {
+            newProductData.owner = ownerId; // Produit spécifique à un admin
+        } else {
+            return res.status(400).json({ error: 'Un propriétaire (ownerId) est requis pour un produit non-global.' });
+        }
+
+        const newProduct = await Product.create(newProductData);
+        res.status(201).json(newProduct);
+    } catch(e) { 
+        if (e.code === 11000) return res.status(409).json({ error: 'Ce nom de produit existe déjà (soit globalement, soit pour cet utilisateur).' });
+        res.status(400).json({ error: e.message }); 
+    }
+});
+
+app.put('/api/admin/products/:id', authSuperAdmin, async (req, res) => {
+     try {
+        const { name } = req.body; // Le Super Admin ne devrait changer que le nom
+        const product = await Product.findById(req.params.id);
+        if (!product) return res.status(404).json({ error: 'Produit introuvable' });
+
+        const oldName = product.name;
+        const newName = name.trim();
+        
+        if (oldName === newName) return res.json(product); // Aucun changement
+
+        // Mettre à jour le nom dans le document Product
+        product.name = newName;
+        await product.save();
+        
+        // IMPORTANT: Mettre à jour le nom dans toutes les ventes existantes
+        await Sale.updateMany(
+            { fishType: oldName, ...(product.owner && { owner: product.owner }) }, // Cible les ventes du bon propriétaire
+            { $set: { fishType: newName } }
+        );
+        
+        res.json(product);
+     } catch(e) { 
+         if (e.code === 11000) return res.status(409).json({ error: 'Ce nom de produit existe déjà.' });
+         res.status(400).json({ error: e.message }); 
+    }
+});
+
+app.delete('/api/admin/products/:id', authSuperAdmin, async (req, res) => {
+    try {
+        const product = await Product.findById(req.params.id);
+        if (!product) return res.status(404).json({ error: 'Produit introuvable' });
+        
+        // Vérifier si le produit est utilisé dans une vente
+        const sale = await Sale.findOne({ fishType: product.name });
+        if (sale) return res.status(400).json({ error: 'Impossible de supprimer, ce produit est utilisé dans au moins une vente.' });
+        
+        await Product.deleteOne({ _id: req.params.id });
+        res.json({ message: 'Produit supprimé.' });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// Routes "Vue" Super Admin
+// MODIFIÉ: Ajout de 'byFish' pour le bilan dynamique
 app.get('/api/admin/summary-for-user/:userId', authSuperAdmin, async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
@@ -237,6 +361,30 @@ app.get('/api/admin/summary-for-user/:userId', authSuperAdmin, async (req, res) 
             { $group: { _id:null, totalAmount:{ $sum:"$amount" }, totalPayment:{ $sum:"$payment" } } }
         ]);
 
+        // NOUVEAU: Logique byFish pour Super Admin
+        // 1. Get all products for this user
+        const allProducts = await Product.find({ $or: [{ isGlobal: true }, { owner: ownerId }] }).select('name').lean();
+        
+        // 2. Get sales summary for this user (in the period)
+        const byFishSales = await Sale.aggregate([ 
+            { $match: q }, 
+            { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } }, 
+            { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } } 
+        ]);
+        const salesMap = new Map(byFishSales.map(s => [s.fishType, s]));
+
+        // 3. Merge (on inclut tous les produits, même ceux à 0)
+        const byFishResult = allProducts.map(p => {
+            const salesData = salesMap.get(p.name) || { amount: 0, payment: 0, balance: 0 };
+            return {
+                fishType: p.name,
+                amount: salesData.amount,
+                payment: salesData.payment,
+                balance: salesData.balance
+            };
+        });
+        // Fin de la logique byFish
+        
         const [totalDebtResult] = await Sale.aggregate([
             { $match: { owner: ownerId, balance: { $gt: 0 } } }, // Dette totale (non périodique)
             { $group: { _id: null, totalDebt: { $sum: "$balance" } } }
@@ -252,6 +400,7 @@ app.get('/api/admin/summary-for-user/:userId', authSuperAdmin, async (req, res) 
             totalPayment: (totals && totals.totalPayment) || 0,
             totalDebt: (totalDebtResult && totalDebtResult.totalDebt) || 0,
             totalCredit: (totalCreditResult && Math.abs(totalCreditResult.totalCredit)) || 0,
+            byFish: byFishResult.map(f => ({ ...f, amount: Number(f.amount.toFixed(2)), payment: Number(f.payment.toFixed(2)), balance: Number(f.balance.toFixed(2)), })) // NOUVEAU: Envoi du byFish
         });
     } catch(e) {
         res.status(500).json({ error: e.message });
@@ -278,51 +427,42 @@ app.get('/api/admin/sales-for-user/:userId', authSuperAdmin, async (req, res) =>
     }
 });
 
-// Route CORRIGÉE pour les logs (filtre sur la date de VENTE, pas de création du log)
 app.get('/api/admin/logs-for-user/:userId', authSuperAdmin, async (req, res) => {
   try {
       const { startDate, endDate } = req.query;
       const ownerId = req.params.userId;
 
-      // 1. Récupérer TOUS les logs pour cet utilisateur
       let logs = await ActionLog.find({ owner: ownerId }).sort({ createdAt: -1 });
 
-      // 2. Filtrer les logs en fonction de la date de la VENTE associée (saleData.date)
       if (startDate || endDate) {
           const start = startDate ? new Date(startDate) : null;
-          // Pour endDate, on prend le début du jour suivant pour inclure toute la journée de fin
           const end = endDate ? new Date(endDate) : null;
           if (end) { end.setDate(end.getDate() + 1); }
 
           logs = logs.filter(log => {
-              // Vérifier si saleData et saleData.date existent
-              if (!log.saleData || !log.saleData.date) {
-                  return false; // Ignorer les logs sans date de vente valide
-              }
+              if (!log.saleData || !log.saleData.date) return false; 
               try {
                   const saleDate = new Date(log.saleData.date);
                   const matchStart = start ? saleDate >= start : true;
                   const matchEnd = end ? saleDate < end : true;
                   return matchStart && matchEnd;
               } catch (e) {
-                  // En cas d'erreur de parsing de date, ignorer ce log
                   console.error(`Error parsing saleData.date for log ${log._id}:`, log.saleData.date, e);
                   return false;
               }
           });
       }
-
       res.json(logs);
   } catch(e) {
-      console.error("Error fetching admin logs:", e); // Ajout d'un log d'erreur plus détaillé
+      console.error("Error fetching admin logs:", e); 
       res.status(500).json({ error: e.message });
   }
 });
 
-// NOUVEAU: Export Excel Super Admin (Ventes et Logs)
+// MODIFIÉ: Export Super Admin (Ventes et Logs) - Ajout filtre fishType
 app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, fishType } = req.query; // MODIFIÉ
         const userId = req.params.userId;
 
         const user = await User.findById(userId);
@@ -340,18 +480,20 @@ app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
             qSales.date = { ...qSales.date, $lt: end };
             qLogs.createdAt = { ...qLogs.createdAt, $lt: end };
         }
+        if (fishType) { // MODIFIÉ
+            qSales.fishType = fishType;
+        }
 
         const sales = await Sale.find(qSales).sort({ date: -1 });
         const logs = await ActionLog.find(qLogs).sort({ createdAt: -1 });
         
         const wb = new ExcelJS.Workbook();
         
-        // Feuille 1: Ventes
         const wsVentes = wb.addWorksheet('Ventes');
         wsVentes.columns = [
             { header: 'Date', key: 'date', width: 15 },
             { header: 'Client', key: 'clientName', width: 25 },
-            { header: 'Poisson', key: 'fishType', width: 12 },
+            { header: 'Produit', key: 'fishType', width: 15 }, // MODIFIÉ
             { header: 'Qté (Kg)', key: 'quantity', width: 15 },
             { header: 'PU', key: 'unitPrice', width: 14 },
             { header: 'Montant', key: 'amount', width: 15 },
@@ -366,7 +508,6 @@ app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
             balance: s.balance, settled: s.settled ? 'Oui' : 'Non',
         }));
 
-        // Feuille 2: Logs d'Actions
         const wsLogs = wb.addWorksheet('Historique Actions');
         wsLogs.columns = [
             { header: 'Date Action', key: 'createdAt', width: 20 },
@@ -396,63 +537,43 @@ app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
     }
 });
 
-// =========================================================================
-// NOUVELLE ROUTE : Export Bilan Soldes Clients pour un Admin (par Super Admin)
-// =========================================================================
+// MODIFIÉ: Export Bilan Soldes Clients (Super Admin) - Ajout filtre fishType
 app.get('/api/admin/export-balances/:userId', authSuperAdmin, async (req, res) => {
   try {
+    const { fishType } = req.query; // MODIFIÉ
     const ownerId = new mongoose.Types.ObjectId(req.params.userId);
     
-    // 1. Agréger les balances par client pour l'Admin ciblé
+    const matchQuery = { owner: ownerId }; // MODIFIÉ
+    if (fishType) { // MODIFIÉ
+        matchQuery.fishType = fishType;
+    }
+    
     const balances = await Sale.aggregate([
-      // Cibler uniquement les ventes de l'Admin ciblé
-      { $match: { owner: ownerId } },
+      { $match: matchQuery }, // MODIFIÉ
       { 
-        // Regrouper par nom de client
         $group: { 
           _id: "$clientName", 
-          
-          // Somme de TOUTES les dettes (balance > 0) pour ce client
-          totalClientDebt: { 
-            $sum: { 
-              $cond: { if: { $gt: ["$balance", 0] }, then: "$balance", else: 0 } 
-            } 
-          },
-          
-          // Somme de TOUS les crédits (balance < 0) pour ce client
-          totalClientCredit: { 
-            $sum: { 
-              $cond: { if: { $lt: ["$balance", 0] }, then: "$balance", else: 0 } 
-            } 
-          }
+          totalClientDebt: { $sum: { $cond: { if: { $gt: ["$balance", 0] }, then: "$balance", else: 0 } } },
+          totalClientCredit: { $sum: { $cond: { if: { $lt: ["$balance", 0] }, then: "$balance", else: 0 } } }
         } 
       },
       {
-        // Mettre en forme les résultats
         $project: {
           _id: 0,
           clientName: "$_id",
-          
-          // Appliquer l'arrondi et la valeur absolue ici
           totalDebt: { $round: ["$totalClientDebt", 2] },
-          totalCredit: { $abs: { $round: ["$totalClientCredit", 2] } }, // Rendre le crédit positif
-          
-          // Calculer le solde net final (Dette + Crédit (négatif))
+          totalCredit: { $abs: { $round: ["$totalClientCredit", 2] } }, 
           totalBalance: { $round: [{ $add: ["$totalClientDebt", "$totalClientCredit"] }, 2] }
         }
       },
-      // Filtrer pour n'afficher que les clients avec un solde (dette ou crédit)
       { $match: { $or: [{ totalDebt: { $ne: 0 } }, { totalCredit: { $ne: 0 } }] } },
-      // Trier par nom de client
       { $sort: { clientName: 1 } } 
     ]);
 
-    // 2. Créer le fichier Excel
     const wb = new ExcelJS.Workbook();
     const user = await User.findById(req.params.userId);
     const ws = wb.addWorksheet(`Soldes Clients de ${user?.companyName || 'Admin'}`);
     
-    // Définir les colonnes
     ws.columns = [
       { header: 'Client', key: 'clientName', width: 30 },
       { header: 'Dette Totale (Le client doit)', key: 'totalDebt', width: 25, style: { numFmt: '#,##0.00 "XOF"' } },
@@ -463,7 +584,6 @@ app.get('/api/admin/export-balances/:userId', authSuperAdmin, async (req, res) =
     ws.getRow(1).font = { bold: true };
     balances.forEach(b => ws.addRow(b));
 
-    // 3. Envoyer le fichier au client
     res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition',`attachment; filename="Soldes_Clients_${user?.companyName.replace(/\s/g, '_')}_${new Date().toISOString().slice(0,10)}.xlsx"`);
     await wb.xlsx.write(res);
@@ -476,14 +596,91 @@ app.get('/api/admin/export-balances/:userId', authSuperAdmin, async (req, res) =
 });
 
 
+/* ---------------- NOUVELLES Routes GESTION PRODUITS (Admin) ---------------- */
+
+// Obtenir la liste des noms de produits (globaux + personnels)
+// Utilisé pour peupler le dropdown de Nouvelle Vente
+app.get('/api/products', auth, async (req, res) => {
+    try {
+        const products = await Product.find({
+            $or: [
+                { isGlobal: true },
+                { owner: req.user.uid }
+            ]
+        }).sort({ name: 1 });
+        // Renvoie une simple liste de noms pour le dropdown
+        res.json(products.map(p => p.name)); 
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Obtenir la liste des objets produits (pour la page de gestion)
+app.get('/api/products/manage', auth, async (req, res) => {
+    try {
+        const products = await Product.find({
+            $or: [
+                { isGlobal: true },
+                { owner: req.user.uid }
+            ]
+        }).sort({ isGlobal: -1, name: 1 });
+        res.json(products);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// Ajouter un nouveau produit personnel
+app.post('/api/products', auth, async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name || name.trim() === '') return res.status(400).json({ error: 'Le nom du produit est requis.' });
+        
+        const productName = name.trim();
+        
+        // Vérifier si un produit global ou personnel existe déjà avec ce nom
+        const existing = await Product.findOne({
+            name: productName,
+            $or: [
+                { isGlobal: true },
+                { owner: req.user.uid }
+            ]
+        });
+        if (existing) return res.status(409).json({ error: `Le produit '${productName}' existe déjà.` });
+
+        const newProduct = await Product.create({
+            name: productName,
+            owner: req.user.uid,
+            isGlobal: false
+        });
+        res.status(201).json(newProduct);
+    } catch(e) { 
+        if (e.code === 11000) return res.status(409).json({ error: 'Ce nom de produit existe déjà.' });
+        res.status(500).json({ error: e.message }); 
+    }
+});
+
+// Supprimer un produit personnel (par ID)
+app.delete('/api/products/:id', auth, async (req, res) => {
+    try {
+        const product = await Product.findOne({
+            _id: req.params.id,
+            owner: req.user.uid, // Ne peut supprimer que ses propres produits
+            isGlobal: false      // Ne peut pas supprimer un produit global
+        });
+
+        if (!product) return res.status(404).json({ error: 'Produit personnel introuvable ou non autorisé.' });
+
+        // Vérifier si le produit est utilisé dans une vente
+        const sale = await Sale.findOne({ owner: req.user.uid, fishType: product.name });
+        if (sale) return res.status(400).json({ error: 'Impossible de supprimer, ce produit est utilisé dans une vente.' });
+        
+        await Product.deleteOne({ _id: req.params.id });
+        res.json({ message: 'Produit supprimé.' });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
 /* ---------------- Routes "ADMIN" (Utilisateur normal) ---------------- */
-// (Toutes les routes ci-dessous sont inchangées et utilisent le middleware 'auth' normal)
 
-// =========================================================================
-// NOUVELLES ROUTES : GESTION CLIENTS (AJOUTÉES)
-// =========================================================================
-
-// Route pour lister tous les clients avec leur solde actuel
+// Routes GESTION CLIENTS (inchangées)
 app.get('/api/clients-management/balances', auth, async (req, res) => {
     try {
         const ownerId = new mongoose.Types.ObjectId(req.user.uid);
@@ -507,11 +704,9 @@ app.get('/api/clients-management/balances', auth, async (req, res) => {
             { $sort: { clientName: 1 } }
         ]);
 
-        // Récupérer tous les noms de clients (même ceux sans solde)
         const allClients = await Sale.distinct('clientName', { owner: ownerId });
         const clientMap = new Map(agg.map(c => [c.clientName, c]));
         
-        // Combinez les clients avec et sans solde
         const results = allClients.map(name => {
             const balanceData = clientMap.get(name) || { totalDebt: 0, totalCredit: 0 };
             return { 
@@ -528,7 +723,6 @@ app.get('/api/clients-management/balances', auth, async (req, res) => {
     }
 });
 
-// Route pour éditer/renommer un client
 app.patch('/api/clients-management/:oldName', auth, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -554,23 +748,20 @@ app.patch('/api/clients-management/:oldName', auth, async (req, res) => {
              return res.status(400).json({ error: "Le nouveau nom est identique à l'ancien." });
         }
 
-        // Vérifier si le nouveau nom est déjà pris par un autre client (en vérifiant une vente existante)
         const existingSale = await Sale.findOne({ owner: ownerId, clientName: newNameUpper }).session(session);
         if (existingSale && existingSale.clientName !== oldNameUpper) {
             await session.abortTransaction();
             return res.status(409).json({ error: `Le nom de client ${newNameUpper} est déjà utilisé.` });
         }
         
-        // Enregistrer l'action dans les logs
         await ActionLog.create([{
             owner: ownerId, companyName: req.user.companyName,
             actionType: 'edit', 
             motif: `Renommage client ${oldNameUpper} -> ${newNameUpper}. Motif: ${motif}`,
-            saleId: new mongoose.Types.ObjectId(), // ID factice car l'action ne cible pas une seule vente
+            saleId: new mongoose.Types.ObjectId(), 
             saleData: { message: `Renommage client: ${oldNameUpper} -> ${newNameUpper}` } 
         }], { session });
 
-        // Mettre à jour toutes les ventes de l'ancien client vers le nouveau
         const updateResult = await Sale.updateMany(
             { owner: ownerId, clientName: oldNameUpper },
             { $set: { clientName: newNameUpper } }
@@ -578,10 +769,6 @@ app.patch('/api/clients-management/:oldName', auth, async (req, res) => {
 
         if (updateResult.modifiedCount === 0) {
             await session.abortTransaction();
-            // On considère que le renommage a réussi si le client n'existait pas non plus dans les ventes
-            // mais l'objectif est ici de renommer des ventes existantes.
-            // Si le client n'a aucune vente, on ne fait rien.
-            // Pour l'instant, on renvoie une 404 si le client n'a pas de ventes.
              return res.status(404).json({ error: 'Client introuvable ou aucune vente associée à mettre à jour.' });
         }
 
@@ -595,10 +782,8 @@ app.patch('/api/clients-management/:oldName', auth, async (req, res) => {
     }
 });
 
-// =========================================================================
-// FIN DES NOUVELLES ROUTES GESTION CLIENTS
-// =========================================================================
 
+// Routes Ventes (Sales) et Actions
 app.get('/api/action-logs', auth, async (req, res) => {
     try {
         const logs = await ActionLog.find({ owner: req.user.uid }).sort({ createdAt: -1 });
@@ -610,11 +795,22 @@ app.post('/api/sales', auth, async (req,res)=>{
   const session = await mongoose.startSession(); session.startTransaction();
   try{
     const { date, clientName, fishType, quantity, delivered=0, unitPrice, payment=0, observation='' } = req.body;
+    
+    // Vérifier si le produit est valide pour cet utilisateur
+    const validProduct = await Product.findOne({
+        name: fishType,
+        $or: [{ isGlobal: true }, { owner: req.user.uid }]
+    });
+    if (!validProduct) {
+        throw new Error(`Produit non valide : ${fishType}`);
+    }
+    
     const [newSale] = await Sale.create([{ 
       owner: req.user.uid, date: date ? new Date(date) : new Date(),
       clientName, fishType, quantity:Number(quantity), delivered:Number(delivered),
       unitPrice:Number(unitPrice), payment:Number(payment), observation
     }], { session }); 
+    
     await session.commitTransaction();
     res.json(newSale); 
   }catch(e){ await session.abortTransaction(); res.status(400).json({ error:e.message }); }
@@ -628,6 +824,15 @@ app.put('/api/sales/:id', auth, async (req, res) => {
         if (!motif || motif.trim() === '') throw new Error("Le motif de l'édition est obligatoire.");
         const sale = await Sale.findOne({ _id: req.params.id, owner: req.user.uid }).session(session);
         if (!sale) { await session.abortTransaction(); return res.status(404).json({ error: 'Vente introuvable' }); }
+        
+        // Vérifier si le nouveau produit est valide
+        if (saleData.fishType && saleData.fishType !== sale.fishType) {
+            const validProduct = await Product.findOne({
+                name: saleData.fishType,
+                $or: [{ isGlobal: true }, { owner: req.user.uid }]
+            });
+            if (!validProduct) throw new Error(`Produit non valide : ${saleData.fishType}`);
+        }
         
         await ActionLog.create([{
             owner: req.user.uid, companyName: req.user.companyName,
@@ -836,30 +1041,70 @@ app.get('/api/client-analysis/:clientName', auth, async (req, res) => {
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// MODIFIÉ: Logique 'byFish' dynamique
 app.get('/api/summary', auth, async (req,res)=>{
   try{
-    const { clientName, startDate, endDate } = req.query; 
-    const q = { owner: new mongoose.Types.ObjectId(req.user.uid) };
+    const { clientName, startDate, endDate, isGlobal } = req.query; 
+    const ownerId = new mongoose.Types.ObjectId(req.user.uid);
+    const q = { owner: ownerId };
+    
     if (clientName) q.clientName = clientName;
     if (startDate) q.date = { ...q.date, $gte: new Date(startDate) };
     if (endDate) { const end = new Date(endDate); end.setDate(end.getDate() + 1); q.date = { ...q.date, $lt: end }; }
     
+    // 1. Calculs des totaux (période)
     const [totals] = await Sale.aggregate([ { $match: q }, { $group: { _id:null, totalAmount:{ $sum:"$amount" }, totalPayment:{ $sum:"$payment" }, totalBalance:{ $sum:"$balance" } } } ]);
-    const byFish = await Sale.aggregate([ { $match: q }, { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } }, { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } } ]);
     const finalTotals = totals || { totalAmount: 0, totalPayment: 0, totalBalance: 0 };
-    const q_current_balance = { owner: new mongoose.Types.ObjectId(req.user.uid) };
+    
+    // 2. Calculs des dettes/crédits actuels (non-périodique, mais filtré par client si fourni)
+    const q_current_balance = { owner: ownerId };
     if (clientName) q_current_balance.clientName = clientName; 
     const [totalDebtResult] = await Sale.aggregate([ { $match: { ...q_current_balance, balance: { $gt: 0 } } }, { $group: { _id: null, totalDebt: { $sum: "$balance" } } } ]);
     const [totalCreditResult] = await Sale.aggregate([ { $match: { ...q_current_balance, balance: { $lt: 0 } } }, { $group: { _id: null, totalCredit: { $sum: "$balance" } } } ]);
+    
+    // 3. Logique 'byFish'
+    let byFishResult;
+    // Définir la query pour les ventes byFish
+    // Si c'est 'isGlobal' (page Bilan Global), on prend TOUTES les ventes de l'admin, sans filtre de date
+    const byFishQuery = isGlobal ? { owner: ownerId } : q;
+
+    // 1. Get all products for this user
+    const allProducts = await Product.find({ $or: [{ isGlobal: true }, { owner: ownerId }] }).select('name').lean();
+    
+    // 2. Get sales summary (période 'byFishQuery')
+    const byFishSales = await Sale.aggregate([ 
+        { $match: byFishQuery }, 
+        { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } }, 
+        { $project: { fishType:"$_id", amount:1, payment:1, balance:1, _id:0 } } 
+    ]);
+    const salesMap = new Map(byFishSales.map(s => [s.fishType, s]));
+
+    // 3. Merge (on inclut tous les produits, même ceux à 0)
+    byFishResult = allProducts.map(p => {
+        const salesData = salesMap.get(p.name) || { amount: 0, payment: 0, balance: 0 };
+        return {
+            fishType: p.name,
+            amount: salesData.amount,
+            payment: salesData.payment,
+            balance: salesData.balance
+        };
+    });
+    
+    // Si ce n'est PAS la page Bilan (isGlobal), on filtre les produits n'ayant aucune activité dans la période
+    if (!isGlobal) {
+        byFishResult = byFishResult.filter(p => p.amount > 0 || p.payment > 0 || p.balance !== 0);
+    }
+    
     res.json({
       totalAmount: Number(finalTotals.totalAmount.toFixed(2)), totalPayment: Number(finalTotals.totalPayment.toFixed(2)),
       totalBalance: Number(finalTotals.totalBalance.toFixed(2)),
       totalDebt: (totalDebtResult && totalDebtResult.totalDebt) || 0,
       totalCredit: (totalCreditResult && Math.abs(totalCreditResult.totalCredit)) || 0,
-      byFish: byFish.map(f => ({ ...f, amount: Number(f.amount.toFixed(2)), payment: Number(f.payment.toFixed(2)), balance: Number(f.balance.toFixed(2)), }))
+      byFish: byFishResult.map(f => ({ ...f, amount: Number(f.amount.toFixed(2)), payment: Number(f.payment.toFixed(2)), balance: Number(f.balance.toFixed(2)), }))
     });
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
+
 
 app.get('/api/dashboard/debts', auth, async (req,res)=>{
   try{
@@ -883,6 +1128,7 @@ app.get('/api/dashboard/credits', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
+// Cette route est utilisée par l'ancien hook 'useClients'
 app.get('/api/clients', auth, async (req, res) => {
   try {
     const clients = await Sale.distinct('clientName', { owner: req.user.uid });
@@ -890,17 +1136,20 @@ app.get('/api/clients', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// MODIFIÉ: Export Bilan Client - Ajout filtre fishType
 app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
   try {
-    const { clientName } = req.query;
+    const { clientName, fishType } = req.query; // MODIFIÉ
     const q = { owner: req.user.uid };
     if (clientName && clientName !== 'all') q.clientName = clientName;
+    if (fishType) q.fishType = fishType; // MODIFIÉ
+    
     const sales = await Sale.find(q).sort({ clientName: 1, date: -1, createdAt: -1 });
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet(clientName && clientName !== 'all' ? `Bilan_${clientName}` : 'Bilan_Global');
     ws.columns = [
       { header: 'Client', key: 'clientName', width: 25 }, { header: 'Date', key: 'date', width: 15 },
-      { header: 'Poisson', key: 'fishType', width: 12 }, { header: 'Quantité (Kg)', key: 'quantity', width: 15 },
+      { header: 'Produit', key: 'fishType', width: 15 }, { header: 'Quantité (Kg)', key: 'quantity', width: 15 }, // MODIFIÉ
       { header: 'Prix Unitaire', key: 'unitPrice', width: 14 }, { header: 'Montant Total', key: 'amount', width: 15 },
       { header: 'Règlement Cumulé', key: 'payment', width: 18 }, { header: 'Balance', key: 'balance', width: 15 },
       { header: 'Type de Solde', key: 'balanceType', width: 15 }, { header: 'Livré (Kg)', key: 'delivered', width: 12 },
@@ -919,14 +1168,19 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// MODIFIÉ: Export Historique Ventes - Ajout filtre fishType
 app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   try{
-    const sales = await Sale.find({ owner:req.user.uid }).sort({ date:-1, createdAt:-1 });
+    const { fishType } = req.query; // MODIFIÉ
+    const q = { owner:req.user.uid };
+    if (fishType) q.fishType = fishType; // MODIFIÉ
+    
+    const sales = await Sale.find(q).sort({ date:-1, createdAt:-1 });
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Historique ventes');
     ws.columns = [
       { header:'Date', key:'date', width:15 }, { header:'Client', key:'clientName', width:25 },
-      { header:'Poisson', key:'fishType', width:12 }, { header:'Quantité', key: 'quantity', width:12 },
+      { header:'Produit', key:'fishType', width:15 }, { header:'Quantité', key: 'quantity', width:12 }, // MODIFIÉ
       { header:'Livré', key:'delivered', width:12 }, { header:'Reste à livrer', key:'remaining', width:14 },
       { header:'Prix Unitaire', key:'unitPrice', width:14 }, { header:'Montant', key:'amount', width:12 },
       { header:'Règlement', key:'payment', width:12 }, { header:'Solde', key:'balance', width:12 },
@@ -947,58 +1201,41 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   }catch(e){ res.status(500).json({ error:e.message }); }
 });
 
-// NOUVEAU: Export Bilan Soldes Clients (LOGIQUE CORRIGÉE)
+// MODIFIÉ: Export Bilan Soldes Clients - Ajout filtre fishType
 app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
   try {
+    const { fishType } = req.query; // MODIFIÉ
     const ownerId = new mongoose.Types.ObjectId(req.user.uid);
     
-    // 1. Agréger les balances par client (LOGIQUE CORRIGÉE)
+    const matchQuery = { owner: ownerId }; // MODIFIÉ
+    if (fishType) { // MODIFIÉ
+        matchQuery.fishType = fishType;
+    }
+    
     const balances = await Sale.aggregate([
-      // Cibler uniquement les ventes du propriétaire connecté
-      { $match: { owner: ownerId } },
+      { $match: matchQuery }, // MODIFIÉ
       { 
-        // Regrouper par nom de client
         $group: { 
           _id: "$clientName", 
-          
-          // Somme de TOUTES les dettes (balance > 0) pour ce client
-          totalClientDebt: { 
-            $sum: { 
-              $cond: { if: { $gt: ["$balance", 0] }, then: "$balance", else: 0 } 
-            } 
-          },
-          
-          // Somme de TOUS les crédits (balance < 0) pour ce client
-          totalClientCredit: { 
-            $sum: { 
-              $cond: { if: { $lt: ["$balance", 0] }, then: "$balance", else: 0 } 
-            } 
-          }
+          totalClientDebt: { $sum: { $cond: { if: { $gt: ["$balance", 0] }, then: "$balance", else: 0 } } },
+          totalClientCredit: { $sum: { $cond: { if: { $lt: ["$balance", 0] }, then: "$balance", else: 0 } } }
         } 
       },
       {
-        // Mettre en forme les résultats
         $project: {
           _id: 0,
           clientName: "$_id",
-          
-          // Appliquer l'arrondi et la valeur absolue ici
           totalDebt: { $round: ["$totalClientDebt", 2] },
-          totalCredit: { $abs: { $round: ["$totalClientCredit", 2] } }, // Rendre le crédit positif
-          
-          // Calculer le solde net final (Dette + Crédit (négatif))
+          totalCredit: { $abs: { $round: ["$totalClientCredit", 2] } }, 
           totalBalance: { $round: [{ $add: ["$totalClientDebt", "$totalClientCredit"] }, 2] }
         }
       },
-      // Trier par nom de client
       { $sort: { clientName: 1 } } 
     ]);
 
-    // 2. Créer le fichier Excel
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Bilan Soldes Clients');
     
-    // Définir les colonnes (les clés 'key' doivent correspondre au $project)
     ws.columns = [
       { header: 'Client', key: 'clientName', width: 30 },
       { header: 'Dette Totale (Le client doit)', key: 'totalDebt', width: 25, style: { numFmt: '#,##0.00 "XOF"' } },
@@ -1006,12 +1243,9 @@ app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
       { header: 'Solde Net', key: 'totalBalance', width: 20, style: { numFmt: '#,##0.00 "XOF"' } },
     ];
     
-    // Mettre la première ligne en gras
     ws.getRow(1).font = { bold: true };
 
-    // Ajouter les lignes de données
     balances.forEach(b => {
-      // N'ajoute que les clients qui ont un solde non nul (ou une dette/crédit non nulle)
       if (b.totalBalance !== 0 || b.totalDebt !== 0 || b.totalCredit !== 0) {
         ws.addRow({
           clientName: b.clientName,
@@ -1022,11 +1256,9 @@ app.get('/api/exports/client-balances.xlsx', auth, async (req, res) => {
       }
     });
 
-    // 3. Envoyer le fichier au client
     res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition','attachment; filename="bilan_solde_clients.xlsx"');
-    await wb.xlsx.write(res);
-    res.end();
+    await wb.xlsx.write(res); res.end();
 
   } catch (e) {
     console.error("Erreur lors de l'export des soldes clients (corrigé):", e);
