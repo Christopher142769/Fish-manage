@@ -1,4 +1,4 @@
-// App.js (COMPLET AVEC GESTION CLIENTS et LOGIQUE NEW-SALE)
+// App.js (COMPLET AVEC GESTION MULTI-PRODUITS)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /** =====================================
@@ -33,9 +33,13 @@ function apiFetchSuperAdmin(path, options = {}) {
 }
 
 const validateClientName = (name) => /^[A-Z0-9]+$/.test(name);
-function BadgeFish({ type }) {
-  const cls = type === "tilapia" ? "text-bg-primary" : "text-bg-success";
-  return <span className={`badge rounded-pill fw-normal ${cls}`}>{type === "tilapia" ? "Tilapia" : "Pangasius"}</span>;
+function BadgeFish({ type, isGlobal }) {
+  // Simple logique de couleur pour les produits les plus communs, sinon gris par défaut
+  let cls = "text-bg-secondary"; 
+  if (type.toLowerCase().includes("tilapia")) cls = "text-bg-primary";
+  if (type.toLowerCase().includes("pangasius")) cls = "text-bg-success";
+  
+  return <span className={`badge rounded-pill fw-normal ${cls} text-capitalize`}>{type} {isGlobal && <i className="bi bi-globe small ms-1" title="Produit Global"></i>}</span>;
 }
 
 /** =====================================
@@ -85,7 +89,66 @@ function useClients() {
     return clients;
 }
 
-// NOUVEAU: Hook pour l'app "Super Admin" (pour charger les Admins/Users)
+// NOUVEAU HOOK: Pour charger la liste des produits disponibles pour l'Admin (Global + Personnel)
+function useProducts() {
+    const [products, setProducts] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    const loadProducts = async () => {
+        setLoading(true);
+        try {
+            const res = await apiFetch("/api/products"); // Cette route retourne la liste des NOMS
+            const data = await res.json();
+            setProducts(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.error("Erreur chargement produits:", e);
+            setProducts([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadProducts();
+        const handler = () => loadProducts(); 
+        window.addEventListener("reload-products", handler); 
+        return () => window.removeEventListener("reload-products", handler);
+    }, []);
+    
+    return { products, loading, reloadProducts: loadProducts };
+}
+
+// NOUVEAU HOOK: Pour charger la liste des objets produits (pour la page de gestion Admin)
+function useManageProducts() {
+    const [products, setProducts] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    const loadProducts = async () => {
+        setLoading(true);
+        try {
+            const res = await apiFetch("/api/products/manage"); // Cette route retourne les OBJETS complets
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Erreur chargement produits");
+            setProducts(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.error("Erreur chargement produits:", e);
+            setProducts([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        loadProducts();
+        const handler = () => loadProducts(); 
+        window.addEventListener("reload-products", handler); 
+        return () => window.removeEventListener("reload-products", handler);
+    }, []);
+    
+    return { products, loading, reloadProducts: loadProducts };
+}
+
+// Hook pour l'app "Super Admin" (pour charger les Admins/Users)
 function useAdminUsers() {
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -191,6 +254,7 @@ function AdminSidebar({ currentPage, onNavigate, onLogout, open, setOpen, isMdUp
     const navItems = [
         { id: "dashboard", icon: "bi-bar-chart-fill", label: "Dashboard Global" },
         { id: "users", icon: "bi-people-fill", label: "Gestion Admins" },
+        { id: "products", icon: "bi-basket-fill", label: "Gestion Produits" }, // NOUVEAU
         { id: "history", icon: "bi-search", label: "Historiques Admins" },
     ];
     return (
@@ -232,7 +296,211 @@ function AdminTopbar({ title, onBurger }) {
 }
 
 // =====================================
-// SUPER ADMIN: Page "Gestion Admins"
+// SUPER ADMIN: Page "Gestion Produits" (NOUVEAU)
+// =====================================
+function AdminProductPage() {
+    const { users, loading: usersLoading, reloadUsers } = useAdminUsers();
+    const [products, setProducts] = useState([]);
+    const [productsLoading, setProductsLoading] = useState(true);
+    const [modal, setModal] = useState({ mode: null, product: null }); // 'add', 'edit'
+
+    const loadProducts = async () => {
+        setProductsLoading(true);
+        try {
+            const res = await apiFetchSuperAdmin("/api/admin/products"); // Cette route renvoie les objets produits avec l'owner peuplé
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Erreur chargement produits");
+            setProducts(Array.isArray(data) ? data : []);
+        } catch (e) {
+            console.error(e.message);
+            setProducts([]);
+        } finally {
+            setProductsLoading(false);
+        }
+    };
+    
+    useEffect(() => { loadProducts(); }, []);
+
+    // State pour le formulaire Modale
+    const [name, setName] = useState("");
+    const [ownerId, setOwnerId] = useState("");
+    const [isGlobal, setIsGlobal] = useState(false);
+    const [formLoading, setFormLoading] = useState(false);
+    const [editMotif, setEditMotif] = useState(""); // Motif pour l'édition du nom (supprimé car le backend ne le demande plus)
+
+    useEffect(() => {
+        if (modal.mode === 'edit' && modal.product) {
+            setName(modal.product.name);
+            setOwnerId(modal.product.owner?._id || "");
+            setIsGlobal(modal.product.isGlobal);
+        } else if (modal.mode === 'add') {
+            setName("");
+            setOwnerId("");
+            setIsGlobal(false);
+        }
+        setFormLoading(false);
+    }, [modal]);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setFormLoading(true);
+        try {
+            let res, data;
+            const body = { name };
+
+            if (modal.mode === 'add') {
+                if (isGlobal) {
+                    body.isGlobal = true;
+                } else if (ownerId) {
+                    body.ownerId = ownerId;
+                    body.isGlobal = false;
+                } else {
+                    throw new Error("Veuillez sélectionner un admin ou cocher 'Produit Global'.");
+                }
+
+                res = await apiFetchSuperAdmin("/api/admin/products", {
+                    method: "POST",
+                    body: JSON.stringify(body)
+                });
+            } else { // mode 'edit'
+                res = await apiFetchSuperAdmin(`/api/admin/products/${modal.product._id}`, {
+                    method: "PUT",
+                    body: JSON.stringify(body)
+                });
+            }
+            
+            data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Erreur serveur");
+            setModal({ mode: null, product: null });
+            loadProducts(); // Recharger la liste
+            window.dispatchEvent(new Event("reload-products")); // Notifier les admins de recharger leur liste
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setFormLoading(false);
+        }
+    };
+
+    const handleDelete = async (product) => {
+        if (!window.confirm(`Confirmer la SUPPRESSION du produit "${product.name}" ?`)) return;
+        
+        try {
+            const res = await apiFetchSuperAdmin(`/api/admin/products/${product._id}`, { method: "DELETE" });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Erreur suppression");
+            loadProducts();
+            window.dispatchEvent(new Event("reload-products"));
+        } catch (e) {
+            alert(e.message);
+        }
+    };
+    
+    return (
+        <div className="card border-0 shadow rounded-4 bg-white">
+            {/* Modale d'ajout/édition */}
+            {modal.mode && (
+                <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                    <div className="modal-dialog modal-dialog-centered">
+                        <div className="modal-content">
+                            <form onSubmit={handleSubmit}>
+                                <div className="modal-header">
+                                    <h5 className="modal-title">{modal.mode === 'add' ? 'Ajouter un Produit' : `Modifier "${modal.product.name}"`}</h5>
+                                    <button type="button" className="btn-close" onClick={() => setModal({mode: null, product: null})}></button>
+                                </div>
+                                <div className="modal-body">
+                                    <div className="mb-3">
+                                        <label className="form-label">Nom du Produit</label>
+                                        <input className="form-control" value={name} onChange={(e) => setName(e.target.value)} required />
+                                    </div>
+                                    
+                                    {modal.mode === 'add' && (
+                                        <>
+                                            <div className="form-check form-switch mb-3">
+                                                <input className="form-check-input" type="checkbox" role="switch" id="isGlobalSwitch" checked={isGlobal} onChange={(e) => { setIsGlobal(e.target.checked); if (e.target.checked) setOwnerId(""); }} />
+                                                <label className="form-check-label" htmlFor="isGlobalSwitch">Produit Global (Disponible pour tous les Admins)</label>
+                                            </div>
+                                            
+                                            {!isGlobal && (
+                                                <div className="mb-3">
+                                                    <label className="form-label">Admin Propriétaire (Produit Spécifique)</label>
+                                                    <select className="form-select" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} required={!isGlobal} disabled={usersLoading}>
+                                                        <option value="">-- Sélectionner un Admin --</option>
+                                                        {users.map(user => <option key={user._id} value={user._id}>{user.companyName} ({user.email})</option>)}
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                    {modal.mode === 'edit' && (
+                                        <div className="alert alert-info small">
+                                            Propriétaire actuel: {modal.product.isGlobal ? 'Global' : modal.product.owner?.companyName || 'N/A'}. 
+                                            Seul le nom peut être modifié pour un produit existant. Le changement de nom sera propagé aux ventes existantes.
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="modal-footer">
+                                    <button type="button" className="btn btn-secondary" onClick={() => setModal({mode: null, product: null})}>Annuler</button>
+                                    <button type="submit" className="btn btn-primary" disabled={formLoading || (!isGlobal && !ownerId && modal.mode === 'add')}>
+                                        {formLoading ? 'Sauvegarde...' : 'Sauvegarder'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            <div className="card-body p-4">
+                <div className="d-flex align-items-center mb-4">
+                    <h5 className="m-0 text-dark"><i className="bi bi-basket-fill me-2"></i> Gestion des Produits (Poisson)</h5>
+                    <button className="btn btn-primary rounded-pill ms-auto" onClick={() => setModal({ mode: 'add', product: null })}>
+                        <i className="bi bi-plus-circle-fill me-2"></i> Ajouter un Produit
+                    </button>
+                </div>
+                
+                <div className="table-responsive">
+                    <table className="table align-middle table-hover">
+                        <thead className="table-light">
+                            <tr>
+                                <th>Nom du Produit</th>
+                                <th>Statut</th>
+                                <th>Admin (Si non Global)</th>
+                                <th>Créé le</th>
+                                <th style={{ width: 150 }}>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {productsLoading && <tr><td colSpan="5" className="text-center py-4 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...</td></tr>}
+                            {!productsLoading && products.length === 0 && <tr><td colSpan="5" className="text-center py-4 text-muted">Aucun produit trouvé.</td></tr>}
+                            {products.map(product => (
+                                <tr key={product._id}>
+                                    <td className="fw-semibold"><BadgeFish type={product.name} isGlobal={product.isGlobal} /></td>
+                                    <td>{product.isGlobal ? <span className="badge text-bg-info">Global</span> : <span className="badge text-bg-warning text-dark">Spécifique</span>}</td>
+                                    <td>{product.owner ? `${product.owner.companyName} (${product.owner.email})` : 'N/A'}</td>
+                                    <td>{formatDate(product.createdAt)}</td>
+                                    <td>
+                                        <button className="btn btn-sm btn-outline-warning rounded-circle me-2" title="Modifier le nom" onClick={() => setModal({ mode: 'edit', product: product })}>
+                                            <i className="bi bi-pencil-fill"></i>
+                                        </button>
+                                        <button className="btn btn-sm btn-outline-danger rounded-circle" title="Supprimer" onClick={() => handleDelete(product)}>
+                                            <i className="bi bi-trash-fill"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+                <div className="alert alert-warning small mt-3">
+                    **Attention :** Le changement de nom d'un produit mettra à jour le nom dans TOUTES les ventes existantes de ce produit (pour le propriétaire concerné). La suppression est bloquée si le produit est lié à une vente.
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// =====================================
+// SUPER ADMIN: Page "Gestion Admins" (INCHANGÉ)
 // =====================================
 function AdminUsersPage() {
     const { users, loading, reloadUsers } = useAdminUsers();
@@ -377,7 +645,7 @@ function AdminUsersPage() {
 }
 
 // =====================================
-// SUPER ADMIN: Page "Dashboard Global"
+// SUPER ADMIN: Page "Dashboard Global" (INCHANGÉ)
 // =====================================
 function AdminDashboardPage() {
     const { users, loading: usersLoading } = useAdminUsers();
@@ -467,12 +735,39 @@ function AdminDashboardPage() {
               <Card title="Dettes Clients (Actuelles)" amount={data?.totalDebt || 0} iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
               <Card title="Crédits Dûs (Actuels)" amount={data?.totalCredit || 0} iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" />
             </div>
+            
+            {/* NOUVEAU: Détail des ventes par Produit pour le Super Admin */}
+            {data && data.byFish && (
+                <>
+                    <h5 className="fw-bold mb-3"><i className="bi bi-bar-chart-fill me-2 text-primary"></i>Synthèse par Produit (Période)</h5>
+                    <div className="row g-4">
+                        {data.byFish.map((f, index) => (
+                            <div className="col-12 col-md-6 col-lg-4" key={index}>
+                                <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
+                                    <div className="card-body">
+                                        <div className="d-flex justify-content-between align-items-center">
+                                            <h6 className="m-0 fw-bold">{f.fishType}</h6>
+                                            <BadgeFish type={f.fishType} />
+                                        </div>
+                                        <hr />
+                                        <div className="row small text-muted">
+                                            <div className="col-4">Ventes: <br /><strong className="text-primary">{money(f.amount)}</strong></div>
+                                            <div className="col-4">Payé: <br /><strong className="text-success">{money(f.payment)}</strong></div>
+                                            <div className="col-4">Solde Net: <br /><strong className={f.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(f.balance))}</strong></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </>
+            )}
         </>
     );
 }
 
 // =====================================
-// SUPER ADMIN: Page "Historiques Admins"
+// SUPER ADMIN: Page "Historiques Admins" (MIS À JOUR AVEC FILTRE PRODUIT)
 // =====================================
 function AdminHistoryPage() {
     const { users, loading: usersLoading } = useAdminUsers();
@@ -481,10 +776,34 @@ function AdminHistoryPage() {
     const [startDate, setStartDate] = useState(() => {
         const d = new Date(); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 10); // 1 mois par défaut
     });
+    const [selectedFishType, setSelectedFishType] = useState(""); // NOUVEAU
+    const [availableProducts, setAvailableProducts] = useState([]); // NOUVEAU
     
     const [sales, setSales] = useState([]);
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
+    
+    // NOUVEAU: Charger la liste des produits pour l'admin sélectionné
+    useEffect(() => {
+        if (!selectedUserId) {
+            setAvailableProducts([]);
+            setSelectedFishType("");
+            return;
+        }
+        const loadProducts = async () => {
+            try {
+                const res = await apiFetchSuperAdmin(`/api/admin/products/user/${selectedUserId}`); // Récupère les noms
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Erreur chargement produits");
+                setAvailableProducts(Array.isArray(data) ? data : []);
+            } catch (e) {
+                console.error("Erreur chargement produits pour Admin:", e.message);
+                setAvailableProducts([]);
+            }
+        };
+        loadProducts();
+    }, [selectedUserId]);
+
     
     const handleSearch = async () => {
         if (!selectedUserId) {
@@ -494,6 +813,7 @@ function AdminHistoryPage() {
         const qs = new URLSearchParams();
         if (startDate) qs.set('startDate', startDate);
         if (endDate) qs.set('endDate', endDate);
+        if (selectedFishType) qs.set('fishType', selectedFishType); // AJOUT FILTRE
         
         try {
             // Fetch Ventes
@@ -502,8 +822,11 @@ function AdminHistoryPage() {
             if (!resSales.ok) throw new Error(dataSales.error || "Erreur chargement ventes");
             setSales(dataSales);
             
-            // Fetch Logs
-            const resLogs = await apiFetchSuperAdmin(`/api/admin/logs-for-user/${selectedUserId}?${qs.toString()}`);
+            // Fetch Logs (pas de filtre produit pour les logs)
+            const qsLogs = new URLSearchParams();
+            if (startDate) qsLogs.set('startDate', startDate);
+            if (endDate) qsLogs.set('endDate', endDate);
+            const resLogs = await apiFetchSuperAdmin(`/api/admin/logs-for-user/${selectedUserId}?${qsLogs.toString()}`);
             const dataLogs = await resLogs.json();
             if (!resLogs.ok) throw new Error(dataLogs.error || "Erreur chargement logs");
             setLogs(dataLogs);
@@ -515,12 +838,14 @@ function AdminHistoryPage() {
         }
     };
     
+    // NOUVEAU: Export Ventes/Logs avec filtre Produit
     const handleExport = async () => {
         if (!selectedUserId) { alert("Veuillez sélectionner un admin."); return; }
         
         const qs = new URLSearchParams();
         if (startDate) qs.set('startDate', startDate);
         if (endDate) qs.set('endDate', endDate);
+        if (selectedFishType) qs.set('fishType', selectedFishType); // AJOUT FILTRE
         
         try {
             const res = await apiFetchSuperAdmin(`/api/admin/export/${selectedUserId}?${qs.toString()}`, { method: "GET" });
@@ -530,22 +855,24 @@ function AdminHistoryPage() {
             const a = document.createElement("a");
             a.href = url;
             const admin = users.find(u => u._id === selectedUserId)?.companyName.replace(/\s/g, '_') || selectedUserId;
-            a.download = `Export_Admin_${admin}_${startDate}_${endDate}.xlsx`;
-            document.body.appendChild(a); a.click(); a.remove();
-            window.URL.revokeObjectURL(url);
+            a.download = `Export_Admin_${admin}_${selectedFishType ? `_${selectedFishType}` : ''}_${startDate}_${endDate}.xlsx`;
+            document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
         } catch (e) {
             alert(e.message);
         }
     };
     
-    // NOUVEAU: Logique d'export des Soldes Clients
+    // NOUVEAU: Logique d'export des Soldes Clients avec filtre Produit
     const handleExportClientBalances = async () => {
         if (!selectedUserId) { alert("Veuillez sélectionner un admin."); return; }
+        
+        const qs = new URLSearchParams();
+        if (selectedFishType) qs.set('fishType', selectedFishType); // AJOUT FILTRE
         
         try {
             setLoading(true);
             // Appel de la nouvelle route backend
-            const res = await apiFetchSuperAdmin(`/api/admin/export-balances/${selectedUserId}`, { method: "GET" });
+            const res = await apiFetchSuperAdmin(`/api/admin/export-balances/${selectedUserId}?${qs.toString()}`, { method: "GET" });
             
             if (!res.ok) {
                 const errorText = await res.text();
@@ -558,7 +885,7 @@ function AdminHistoryPage() {
             a.href = url;
             const admin = users.find(u => u._id === selectedUserId)?.companyName.replace(/\s/g, '_') || selectedUserId;
             // Nom de fichier avec le nom de l'admin
-            a.download = `Soldes_Clients_${admin}_${new Date().toISOString().slice(0,10)}.xlsx`;
+            a.download = `Soldes_Clients_${admin}_${selectedFishType ? `_${selectedFishType}` : ''}_${new Date().toISOString().slice(0,10)}.xlsx`;
             document.body.appendChild(a); 
             a.click(); 
             a.remove();
@@ -576,22 +903,29 @@ function AdminHistoryPage() {
                 <div className="card-body p-4">
                     <h5 className="fw-bold mb-3"><i className="bi bi-funnel-fill me-2 text-info"></i>Filtres Historiques</h5>
                     <div className="row g-3">
-                        <div className="col-12 col-md-4">
+                        <div className="col-12 col-lg-3">
                             <label className="form-label small fw-semibold">Admin / Entreprise</label>
-                            <select className="form-select" value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} disabled={usersLoading || loading}>
+                            <select className="form-select" value={selectedUserId} onChange={(e) => { setSelectedUserId(e.target.value); setSelectedFishType(""); }} disabled={usersLoading || loading}>
                                 <option value="">-- Sélectionner un admin --</option>
                                 {users.map(user => <option key={user._id} value={user._id}>{user.companyName}</option>)}
                             </select>
                         </div>
-                        <div className="col-6 col-md-3">
+                        <div className="col-12 col-lg-3">
+                            <label className="form-label small fw-semibold">Produit (Optionnel)</label>
+                            <select className="form-select" value={selectedFishType} onChange={(e) => setSelectedFishType(e.target.value)} disabled={loading || !selectedUserId || availableProducts.length === 0}>
+                                <option value="">-- Tous les produits --</option>
+                                {availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
+                            </select>
+                        </div>
+                        <div className="col-6 col-md-3 col-lg-2">
                             <label className="form-label small fw-semibold">Date de Début</label>
                             <input type="date" className="form-control" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={loading} />
                         </div>
-                        <div className="col-6 col-md-3">
+                        <div className="col-6 col-md-3 col-lg-2">
                             <label className="form-label small fw-semibold">Date de Fin</label>
                             <input type="date" className="form-control" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={loading} />
                         </div>
-                        <div className="col-12 col-md-2 d-flex align-items-end gap-2">
+                        <div className="col-12 col-lg-2 d-flex align-items-end gap-2">
                             <button className="btn btn-primary w-100" onClick={handleSearch} disabled={loading || !selectedUserId}>
                                 <i className="bi bi-search"></i>
                             </button>
@@ -612,13 +946,13 @@ function AdminHistoryPage() {
             
             {/* Table des Ventes */}
             <div className="card border-0 shadow rounded-4 mb-4 bg-white">
-                <div className="card-header bg-light"><h5 className="m-0">Historique des Ventes</h5></div>
+                <div className="card-header bg-light"><h5 className="m-0">Historique des Ventes (Filtré: {selectedFishType || 'Tous'})</h5></div>
                 <div className="card-body p-4">
                     <div className="table-responsive">
                         <table className="table table-sm table-striped align-middle">
                             <thead className="table-dark">
                                 <tr>
-                                    <th>Date</th><th>Client</th><th>Poisson</th><th>Montant</th><th>Payé</th><th>Solde</th>
+                                    <th>Date</th><th>Client</th><th>Produit</th><th>Montant</th><th>Payé</th><th>Solde</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -639,7 +973,7 @@ function AdminHistoryPage() {
                 </div>
             </div>
             
-            {/* Table des Actions */}
+            {/* Table des Actions (Logs) */}
             <div className="card border-0 shadow rounded-4 mb-4 bg-white">
                 <div className="card-header bg-light"><h5 className="m-0">Historique des Actions (Modifications / Suppressions)</h5></div>
                 <div className="card-body p-4">
@@ -699,6 +1033,7 @@ function AdminApp() {
         switch (page) {
             case "dashboard": return "Dashboard Global 📊";
             case "users": return "Gestion des Administrateurs 👥";
+            case "products": return "Gestion des Produits 🐟"; // NOUVEAU
             case "history": return "Historiques des Admins 🔍";
             default: return "Super Admin";
         }
@@ -707,6 +1042,7 @@ function AdminApp() {
     const renderPage = () => {
         switch (currentPage) {
             case "users": return <AdminUsersPage />;
+            case "products": return <AdminProductPage />; // NOUVEAU
             case "history": return <AdminHistoryPage />;
             case "dashboard": default: return <AdminDashboardPage />;
         }
@@ -748,7 +1084,8 @@ function Sidebar({ companyName, currentPage, onNavigate, onLogout, open, setOpen
   const navItems = [
     { id: "dashboard", icon: "bi-house-door-fill", label: "Dashboard" },
     { id: "client-analysis", icon: "bi-search", label: "Analyse Client" }, 
-    { id: "client-management", icon: "bi-people-fill", label: "Gestion Clients" }, // AJOUTÉ
+    { id: "client-management", icon: "bi-people-fill", label: "Gestion Clients" }, 
+    { id: "product-management", icon: "bi-basket-fill", label: "Gestion Produits" }, // NOUVEAU
     { id: "new-sale", icon: "bi-cash-coin", label: "Nouvelle Vente" },
     { id: "sales", icon: "bi-table", label: "Historique & Actions" },
     { id: "debts", icon: "bi-exclamation-triangle-fill", label: "Dettes Clients" },
@@ -795,7 +1132,7 @@ function Topbar({ title, companyName, onBurger }) {
 }
 
 // =====================================
-// ADMIN/USER: Auth
+// ADMIN/USER: Auth (INCHANGÉ)
 // =====================================
 function AuthView({ onAuth }) {
   const [mode, setMode] = useState("login");
@@ -870,7 +1207,19 @@ function AuthView({ onAuth }) {
 // =====================================
 // ADMIN/USER: Formulaires et Modales
 // =====================================
+// SaleFormBody (MIS À JOUR AVEC LE NOUVEAU HOOK PRODUITS)
 function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
+    const { products, loading } = useProducts(); // NOUVEAU
+    
+    // Si on est en édition, on s'assure que le produit actuel est dans la liste, sinon on l'ajoute temporairement.
+    const allProducts = useMemo(() => {
+        if (!isEdit) return products;
+        if (products.includes(data.fishType)) return products;
+        return [data.fishType, ...products].sort();
+    }, [products, data.fishType, isEdit]);
+    
+    if (loading) return <div className="text-center text-muted small py-3"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement des produits...</div>;
+    
     return (
         <div className="row g-3">
             {isEdit && (
@@ -887,9 +1236,10 @@ function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
                 </>
             )}
             <div className="col-6">
-                <label className="form-label small fw-semibold">Poisson</label>
-                <select className="form-select" value={data.fishType} onChange={(e) => setData(p => ({...p, fishType: e.target.value}))} disabled={disabled}>
-                    <option value="tilapia">Tilapia</option><option value="pangasius">Pangasius</option>
+                <label className="form-label small fw-semibold">Produit (Poisson)</label>
+                <select className="form-select" value={data.fishType} onChange={(e) => setData(p => ({...p, fishType: e.target.value}))} disabled={disabled || allProducts.length === 0}>
+                    {allProducts.length === 0 && <option value="">-- Aucun produit disponible --</option>}
+                    {allProducts.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
             </div>
             <div className="col-6">
@@ -916,13 +1266,25 @@ function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
     );
 }
 
-// SaleForm (MIS À JOUR AVEC SÉLECTION/SAISIE CLIENT FORCÉE)
+// SaleForm (MIS À JOUR AVEC SÉLECTION PRODUIT INITIALE ET HOOK)
 function SaleForm({ onSaved }) {
-    const clients = useClients(); // UTILISE LE HOOK
-    const [formData, setFormData] = useState({ fishType: 'tilapia', quantity: '', delivered: '', unitPrice: '', payment: '', observation: '' });
+    const clients = useClients(); // UTILISE LE HOOK CLIENTS
+    const { products, loading: productsLoading } = useProducts(); // NOUVEAU: UTILISE LE HOOK PRODUITS
+    
+    // Initialiser formData avec le premier produit disponible ou une chaîne vide
+    const initialProduct = products.length > 0 ? products[0] : '';
+    const [formData, setFormData] = useState({ fishType: initialProduct, quantity: '', delivered: '', unitPrice: '', payment: '', observation: '' });
+    
+    // Mettre à jour formData.fishType si la liste des produits change et que fishType est vide
+    useEffect(() => {
+        if (!productsLoading && products.length > 0 && !formData.fishType) {
+            setFormData(p => ({ ...p, fishType: products[0] }));
+        }
+    }, [products, productsLoading, formData.fishType]);
+    
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
     const [clientName, setClient] = useState(""); // Sera le client sélectionné ou le nouveau client
-    const [isNewClient, setIsNewClient] = useState(false); // NOUVEAU: Pour gérer la création vs sélection
+    const [isNewClient, setIsNewClient] = useState(false); 
     const [loading, setLoading] = useState(false);
     
     const amount = (Number(formData.quantity || 0) * Number(formData.unitPrice || 0)) || 0;
@@ -935,6 +1297,7 @@ function SaleForm({ onSaved }) {
             const clientUpper = clientName.toUpperCase();
             if (isNewClient && !validateClientName(clientUpper)) throw new Error("Le nom du client doit être en MAJUSCULES (A-Z, 0-9) sans espace/caractère spécial. Ex: ENTREPRISEA1");
             if (!clientUpper) throw new Error("Veuillez sélectionner ou saisir un nom de client."); // Double vérification
+            if (!formData.fishType) throw new Error("Veuillez sélectionner un produit."); // Vérification produit
             
             const q = Number(formData.quantity || 0); const u = Number(formData.unitPrice || 0);
             if (q <= 0) throw new Error("La quantité commandée doit être positive.");
@@ -955,7 +1318,7 @@ function SaleForm({ onSaved }) {
             if (!res.ok) throw new Error(data.error || "Erreur");
             
             // Réinitialisation après succès
-            setClient(""); setFormData({fishType: 'tilapia', quantity: '', delivered: '', unitPrice: '', payment: '', observation: ''});
+            setClient(""); setFormData(p => ({...p, quantity: '', delivered: '', unitPrice: '', payment: '', observation: ''})); // On garde le fishType par défaut
             setIsNewClient(false); // On revient à la sélection
             onSaved && onSaved(data); 
             window.dispatchEvent(new Event("reload-sales")); 
@@ -1101,7 +1464,7 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
     const [useType, setUseType] = useState('refund'); 
     const [amount, setAmount] = useState(Math.abs(sale.balance).toFixed(2));
     const [loading, setLoading] = useState(false);
-    const [newSaleFormData, setNewSaleFormData] = useState({ fishType: 'tilapia', quantity: '', delivered: '', unitPrice: '', payment: 0, observation: '' });
+    const [newSaleFormData, setNewSaleFormData] = useState({ fishType: sale.fishType || '', quantity: '', delivered: '', unitPrice: '', payment: 0, observation: '' }); // Utilise le produit de la vente de crédit par défaut
     const creditAvailable = Math.abs(sale.balance);
 
     const handleRefund = async () => {
@@ -1123,9 +1486,12 @@ function CreditUseModal({ sale, onClose, onRefundSuccess, onNewSaleSuccess, onMa
             const q = Number(newSaleFormData.quantity || 0); const u = Number(newSaleFormData.unitPrice || 0);
             if (q <= 0 || u <= 0) throw new Error("Quantité et Prix Unitaire doivent être positifs.");
             const clientNameUpper = sale.clientName.toUpperCase(); 
+            
+            if (!newSaleFormData.fishType) throw new Error("Veuillez sélectionner un produit pour la nouvelle vente.");
+            
             const res = await apiFetch("/api/sales", { method: "POST", body: JSON.stringify({ date: new Date().toISOString().slice(0, 10), clientName: clientNameUpper, fishType: newSaleFormData.fishType, quantity: q, delivered: Number(newSaleFormData.delivered || 0), unitPrice: u, payment: newSaleFormData.payment || 0, observation: `Vente potentiellement payée par CREDIT client. Utilisation MANUELLE nécessaire. ${newSaleFormData.observation}` }), });
             const data = await res.json(); if (!res.ok) throw new Error(data.error || "Erreur création vente");
-            alert(`Nouvelle vente de ${money(q * u)} créée. Utilisez "Solder les dettes" pour appliquer le crédit.`);
+            alert(`Nouvelle vente de ${money(q * u)} créée. Utilisez l'onglet "Solder les dettes" pour appliquer le crédit.`);
             onNewSaleSuccess();
         } catch (e) { alert(e.message); } finally { setLoading(false); }
     };
@@ -1275,7 +1641,7 @@ function DeleteMotifModal({ sale, onClose, onDeleteSuccess }) {
 // ADMIN/USER: Composants de Page
 // =====================================
 
-// NOUVEAU: Modale d'édition de client (Nom)
+// NOUVEAU: Modale d'édition de client (Nom) (INCHANGÉ)
 function EditClientModal({ clientName, onClose, onSaveSuccess }) {
     const [newName, setNewName] = useState(clientName);
     const [motif, setMotif] = useState("");
@@ -1335,7 +1701,7 @@ function EditClientModal({ clientName, onClose, onSaveSuccess }) {
     );
 }
 
-// NOUVEAU: Page de Gestion des Clients
+// NOUVEAU: Page de Gestion des Clients (INCHANGÉ)
 function ClientManagementPage() {
     const [clients, setClients] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -1419,10 +1785,145 @@ function ClientManagementPage() {
     );
 }
 
+// NOUVEAU: Page de Gestion des Produits (Admin)
+function ProductManagementPage() {
+    const { products, loading, reloadProducts } = useManageProducts(); // Récupère les objets produits
+    const [newProductName, setNewProductName] = useState("");
+    const [formLoading, setFormLoading] = useState(false);
+    
+    // Filtres
+    const globalProducts = products.filter(p => p.isGlobal);
+    const personalProducts = products.filter(p => !p.isGlobal);
 
+    const handleAddProduct = async (e) => {
+        e.preventDefault();
+        setFormLoading(true);
+        try {
+            if (!newProductName.trim()) throw new Error("Le nom du produit est requis.");
+            const res = await apiFetch("/api/products", {
+                method: "POST",
+                body: JSON.stringify({ name: newProductName.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Erreur lors de l'ajout du produit");
+            setNewProductName("");
+            reloadProducts();
+            window.dispatchEvent(new Event("reload-products")); // Recharger le hook useProducts pour les dropdowns
+            alert(`Produit "${data.name}" ajouté avec succès !`);
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setFormLoading(false);
+        }
+    };
+    
+    const handleDeleteProduct = async (product) => {
+        if (product.isGlobal) {
+            alert("Vous ne pouvez pas supprimer un produit global.");
+            return;
+        }
+        if (!window.confirm(`Confirmer la SUPPRESSION de votre produit personnel "${product.name}" ?\n\n(La suppression échouera si le produit est utilisé dans une vente.)`)) return;
+        
+        try {
+            const res = await apiFetch(`/api/products/${product._id}`, { method: "DELETE" });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Erreur suppression");
+            reloadProducts();
+            window.dispatchEvent(new Event("reload-products"));
+            alert(data.message);
+        } catch (e) {
+            alert(e.message);
+        }
+    };
+
+    return (
+        <div className="card border-0 shadow rounded-4 mb-4 bg-white">
+            <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center">
+                <i className="bi bi-basket-fill me-2 fs-5"></i>
+                <h5 className="m-0">Gestion des Produits (Poisson)</h5>
+            </div>
+            <div className="card-body p-4">
+                <p className="text-muted">Gérez vos produits personnels et visualisez les produits globaux disponibles.</p>
+                
+                {/* Formulaire d'ajout de produit personnel */}
+                <div className="mb-5 p-3 bg-light rounded-3 border">
+                    <h6 className="fw-bold mb-3"><i className="bi bi-plus-circle-fill me-2 text-primary"></i>Ajouter un Produit Personnel</h6>
+                    <form onSubmit={handleAddProduct} className="d-flex gap-3">
+                        <input type="text" className="form-control form-control-lg" placeholder="Nom du nouveau produit (Ex: Carpe, Thon frais)" value={newProductName} onChange={(e) => setNewProductName(e.target.value)} required disabled={formLoading} />
+                        <button type="submit" className="btn btn-primary btn-lg" disabled={formLoading || !newProductName.trim()}>
+                            <i className={`bi ${formLoading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>Ajouter
+                        </button>
+                    </form>
+                    <small className="text-muted mt-1 d-block">Le nom doit être unique et n'est disponible que pour vous.</small>
+                </div>
+                
+                {loading && <div className="text-center py-4 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement des produits...</div>}
+                
+                {/* Tableau des Produits Personnels */}
+                {!loading && personalProducts.length > 0 && (
+                    <div className="mb-5">
+                        <h6 className="fw-bold mb-3 text-warning"><i className="bi bi-person-fill me-2"></i>Mes Produits Personnels ({personalProducts.length})</h6>
+                        <div className="table-responsive">
+                            <table className="table align-middle table-hover">
+                                <thead className="table-warning">
+                                    <tr>
+                                        <th>Nom du Produit</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {personalProducts.map(p => (
+                                        <tr key={p._id}>
+                                            <td className="fw-semibold"><BadgeFish type={p.name} /></td>
+                                            <td>
+                                                <button className="btn btn-sm btn-outline-danger rounded-circle" title="Supprimer" onClick={() => handleDeleteProduct(p)}>
+                                                    <i className="bi bi-trash-fill"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+                
+                {/* Tableau des Produits Globaux */}
+                {!loading && globalProducts.length > 0 && (
+                    <div>
+                        <h6 className="fw-bold mb-3 text-info"><i className="bi bi-globe me-2"></i>Produits Globaux ({globalProducts.length})</h6>
+                        <div className="table-responsive">
+                            <table className="table align-middle table-hover">
+                                <thead className="table-info">
+                                    <tr>
+                                        <th>Nom du Produit</th>
+                                        <th className="small">Statut</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {globalProducts.map(p => (
+                                        <tr key={p._id}>
+                                            <td className="fw-semibold"><BadgeFish type={p.name} isGlobal={true} /></td>
+                                            <td><span className="badge text-bg-info">Global</span></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+                
+                {!loading && products.length === 0 && <div className="text-center py-4 text-muted">Aucun produit disponible (ajoutez un produit personnel ou contactez l'administrateur).</div>}
+            </div>
+        </div>
+    );
+}
+
+// SalesTable (MIS À JOUR AVEC FILTRE PRODUIT)
 function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
+  const { products: availableProducts } = useProducts(); // NOUVEAU: Récupère la liste des produits pour le filtre
   const [sales, setSales] = useState([]);
-  const [filterType, setFilterType] = useState("");
+  const [filterType, setFilterType] = useState(""); // NOUVEAU
   const [searchClient, setSearchClient] = useState(""); 
   const [openRow, setOpenRow] = useState(null);
   const [actionType, setActionType] = useState("");
@@ -1434,13 +1935,14 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
   const load = async () => {
     setLoading(true); await new Promise(resolve => setTimeout(resolve, 100)); 
     const qs = new URLSearchParams();
-    if (filterType) qs.set("fishType", filterType);
+    if (filterType) qs.set("fishType", filterType); // NOUVEAU: Ajout du filtre produit
     if (clientName || searchClient) qs.set("client", clientName || searchClient);
     if (startDate) qs.set("startDate", startDate); if (endDate) qs.set("endDate", endDate);
     const res = await apiFetch(`/api/sales?${qs.toString()}`);
     const data = await res.json(); setSales(Array.isArray(data) ? data : []);
     setLoading(false);
   };
+  // MODIFIÉ: Ajout de filterType aux dépendances
   useEffect(() => { load(); }, [filterType, clientName, searchClient, startDate, endDate]);
 
   const toggleAction = (id, type, suggested) => {
@@ -1483,10 +1985,12 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
 
   const exportExcel = async () => {
     try {
-      const res = await apiFetch("/api/exports/sales.xlsx", { method: "GET" });
+      const qs = new URLSearchParams();
+      if (filterType) qs.set("fishType", filterType); // NOUVEAU: Filtre à l'export
+      const res = await apiFetch(`/api/exports/sales.xlsx?${qs.toString()}`, { method: "GET" });
       if (!res.ok) throw new Error("Export impossible");
       const blob = await res.blob(); const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = "historique_ventes.xlsx";
+      const a = document.createElement("a"); a.href = url; a.download = `historique_ventes${filterType ? `_${filterType}` : ''}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
     } catch (e) { alert(e.message); }
   };
@@ -1502,13 +2006,17 @@ function SalesTable({ clientName, startDate, endDate, loading, setLoading }) {
           <h5 className="m-0 text-dark"><i className="bi bi-table me-2"></i> Historique des Opérations</h5>
           <div className="ms-auto d-flex gap-2 w-100 w-md-auto">
             <div className="input-group"><span className="input-group-text"><i className="bi bi-search"></i></span><input className="form-control" placeholder="Rechercher client..." value={clientName || searchClient} onChange={(e) => setSearchClient(e.target.value)} disabled={!!clientName} /></div>
-            <select className="form-select" value={filterType} onChange={(e) => setFilterType(e.target.value)}><option value="">Tous les poissons</option><option value="tilapia">Tilapia</option><option value="pangasius">Pangasius</option></select>
+            {/* NOUVEAU: Liste déroulante des produits */}
+            <select className="form-select" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+                <option value="">Tous les produits</option>
+                {availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
             <button className="btn btn-outline-success rounded-pill" onClick={exportExcel}><i className="bi bi-file-earmark-excel me-1"></i> Exporter</button>
           </div>
         </div>
         <div className="table-responsive">
           <table className="table align-middle table-hover border-light">
-            <thead className="table-dark"><tr><th>Date</th><th>Client</th><th>Poisson</th><th>Qté (Kg)</th><th>Livré (Kg)</th><th>Reste (Kg)</th><th>PU</th><th>Montant</th><th>Payé</th><th>Solde</th><th>Statut</th><th style={{ width: 300 }}>Actions</th></tr></thead>
+            <thead className="table-dark"><tr><th>Date</th><th>Client</th><th>Produit</th><th>Qté (Kg)</th><th>Livré (Kg)</th><th>Reste (Kg)</th><th>PU</th><th>Montant</th><th>Payé</th><th>Solde</th><th>Statut</th><th style={{ width: 300 }}>Actions</th></tr></thead>
             <tbody>
               {loading && <tr><td colSpan="12" className="text-center py-4 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...</td></tr>}
               {!loading && sales.length === 0 && <tr><td colSpan="12" className="text-center py-4 text-muted">Aucune vente enregistrée.</td></tr>}
@@ -1577,40 +2085,78 @@ function ReloadableSalesTable() {
   return <SalesTable key={key} clientName={""} startDate={""} endDate={""} loading={loading} setLoading={setLoading} />;
 }
 
+// ChartsPanel (MIS À JOUR AVEC LOGIQUE MULTI-PRODUITS)
 function ChartsPanel({ sales, loading }) { 
   const chartReady = useChartJs();
   const salesRef = useRef(null); const debtsRef = useRef(null); const typeRef = useRef(null);
   const salesChart = useRef(null); const debtsChart = useRef(null); const typeChart = useRef(null);
+  
   const data = useMemo(() => {
-    const monthlyMap = new Map(); let tilapiaAmount = 0; let pangasiusAmount = 0;
+    const monthlyMap = new Map(); 
+    const productMap = new Map();
+    
     sales.forEach((s) => {
+      // Data mensuelle
       const d = new Date(s.date); const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const curr = monthlyMap.get(k) || { amount: 0, balance: 0 };
       curr.amount += Number(s.amount || 0); curr.balance += Math.max(0, Number(s.balance || 0)); 
       monthlyMap.set(k, curr);
-      if (s.fishType === "tilapia") tilapiaAmount += Number(s.amount || 0);
-      if (s.fishType === "pangasius") pangasiusAmount += Number(s.amount || 0);
+      
+      // Data par produit
+      const currentProductAmount = productMap.get(s.fishType) || 0;
+      productMap.set(s.fishType, currentProductAmount + Number(s.amount || 0));
     });
-    const labels = Array.from(monthlyMap.keys()).sort(); const amounts = labels.map((k) => monthlyMap.get(k).amount);
+    
+    const labels = Array.from(monthlyMap.keys()).sort(); 
+    const amounts = labels.map((k) => monthlyMap.get(k).amount);
     const balances = labels.map((k) => monthlyMap.get(k).balance);
-    return { labels, amounts, balances, tilapiaAmount, pangasiusAmount };
+    
+    const productLabels = Array.from(productMap.keys());
+    const productAmounts = productLabels.map(k => productMap.get(k));
+    
+    // Générer des couleurs dynamiquement pour le graphique en anneau
+    const colors = productLabels.map((_, i) => `hsl(${i * (360 / productLabels.length)}, 70%, 50%)`);
+
+    return { labels, amounts, balances, productLabels, productAmounts, colors };
   }, [sales]);
+  
   useEffect(() => {
     if (!chartReady || sales.length === 0) { [salesChart, debtsChart, typeChart].forEach((chart) => chart.current?.destroy?.()); return; };
     const Chart = window.Chart; [salesChart, debtsChart, typeChart].forEach((chart) => chart.current?.destroy?.());
-    salesChart.current = new Chart(salesRef.current, { type: "bar", data: { labels: data.labels, datasets: [{ label: "Ventes (XOF)", data: data.amounts, backgroundColor: "rgba(0, 123, 255, 0.8)", borderRadius: 5, barThickness: "flex", maxBarThickness: 50, }], }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }, });
-    debtsChart.current = new Chart(debtsRef.current, { type: "line", data: { labels: data.labels, datasets: [{ label: "Dettes (Solde XOF)", data: data.balances, borderColor: "rgb(220, 53, 69)", backgroundColor: "rgba(220, 53, 69, 0.1)", fill: true, tension: 0.4, pointRadius: 3, }], }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }, });
-    typeChart.current = new Chart(typeRef.current, { type: "doughnut", data: { labels: ["Tilapia", "Pangasius"], datasets: [{ data: [data.tilapiaAmount, data.pangasiusAmount], backgroundColor: ["#007bff", "#198754"], hoverOffset: 4 }], }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }, });
+    
+    // Graphique Ventes Mensuelles
+    salesChart.current = new Chart(salesRef.current, { 
+        type: "bar", 
+        data: { labels: data.labels, datasets: [{ label: "Ventes (XOF)", data: data.amounts, backgroundColor: "rgba(0, 123, 255, 0.8)", borderRadius: 5, barThickness: "flex", maxBarThickness: 50, }], }, 
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }, 
+    });
+    
+    // Graphique Dettes
+    debtsChart.current = new Chart(debtsRef.current, { 
+        type: "line", 
+        data: { labels: data.labels, datasets: [{ label: "Dettes (Solde XOF)", data: data.balances, borderColor: "rgb(220, 53, 69)", backgroundColor: "rgba(220, 53, 69, 0.1)", fill: true, tension: 0.4, pointRadius: 3, }], }, 
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }, 
+    });
+    
+    // Graphique Ventes par Espèce (Dynamique)
+    typeChart.current = new Chart(typeRef.current, { 
+        type: "doughnut", 
+        data: { labels: data.productLabels, datasets: [{ data: data.productAmounts, backgroundColor: data.colors, hoverOffset: 4 }], }, 
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } }, 
+    });
+    
     return () => { [salesChart, debtsChart, typeChart].forEach((chart) => chart.current?.destroy?.()); };
   }, [chartReady, data, sales]); 
+  
   if (loading || sales.length === 0) {
       return (<div className="row g-4 mb-4"><div className="col-lg-6 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100 p-5 text-center text-muted">Aucune donnée de vente.</div></div><div className="col-lg-6 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100 p-5 text-center text-muted">Aucune donnée de vente.</div></div><div className="col-lg-12 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100 p-5 text-center text-muted">Aucune donnée de vente.</div></div></div>);
   }
+  
   return (
     <div className="row g-4 mb-4">
       <div className="col-lg-6 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100"><div className="card-body"><h5 className="fw-bold text-dark mb-3"><i className="bi bi-bar-chart-fill me-2 text-primary"></i>Volume des Ventes</h5><div style={{ height: 300 }} className="chart-container">{!chartReady ? <div className="text-muted small text-center pt-5">Chargement...</div> : <canvas ref={salesRef} />}</div></div></div></div>
       <div className="col-lg-6 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100"><div className="card-body"><h5 className="fw-bold text-dark mb-3"><i className="bi bi-file-earmark-bar-graph-fill me-2 text-danger"></i>Évolution des Dettes</h5><div style={{ height: 300 }} className="chart-container">{!chartReady ? <div className="text-muted small text-center pt-5">Chargement...</div> : <canvas ref={debtsRef} />}</div></div></div></div>
-      <div className="col-lg-12 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100"><div className="card-body"><h5 className="fw-bold text-dark mb-3"><i className="bi bi-pie-chart-fill me-2 text-info"></i>Ventes par Espèce</h5><div style={{ height: 300 }} className="d-flex align-items-center justify-content-center chart-container">{!chartReady ? <div className="text-muted small">Chargement...</div> : <canvas ref={typeRef} style={{ maxHeight: "250px" }} />}</div></div></div></div>
+      <div className="col-lg-12 col-xl-4"><div className="card border-0 shadow-sm rounded-4 h-100"><div className="card-body"><h5 className="fw-bold text-dark mb-3"><i className="bi bi-pie-chart-fill me-2 text-info"></i>Ventes par Produit</h5><div style={{ height: 300 }} className="d-flex align-items-center justify-content-center chart-container">{!chartReady ? <div className="text-muted small">Chargement...</div> : <canvas ref={typeRef} style={{ maxHeight: "250px" }} />}</div></div></div></div>
     </div>
   );
 }
@@ -1647,23 +2193,59 @@ function DueNotificationsPanel({ sales, loading }) {
   );
 }
 
+// SummaryCards (MIS À JOUR AVEC LOGIQUE MULTI-PRODUITS)
 function SummaryCards({ sum, loading }) {
   if (loading || !sum) {
       const CardLoading = ({ title, iconClass, cardClass }) => (<div className="col-12 col-md-3"><div className={`card border-0 shadow-sm rounded-4 ${cardClass} h-100`}><div className="card-body d-flex align-items-center p-4"><div className="me-3 p-3 rounded-circle bg-opacity-25 bg-white d-flex align-items-center justify-content-center" style={{ width: 60, height: 60 }}><i className={`bi ${iconClass} fs-3`}></i></div><div><div className="text-uppercase small opacity-75">{title}</div><div className="h3 m-0 fw-bold">{loading ? <i className="bi bi-arrow-clockwise spin small"></i> : money(0)}</div></div></div></div></div>);
-      return (<div className="row g-4 mb-5"><CardLoading title="Total Ventes" iconClass="bi-graph-up-arrow text-primary" cardClass="bg-primary text-white bg-opacity-75" /><CardLoading title="Total Encaissé" iconClass="bi-check-circle-fill text-success" cardClass="bg-success text-white bg-opacity-75" /><CardLoading title="Dettes Clients" iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" /><CardLoading title="Crédits Dûs" iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" /><div className="col-12 col-md-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body text-center text-muted">Détail Tilapia (0 XOF)</div></div></div><div className="col-12 col-md-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body text-center text-muted">Détail Pangasius (0 XOF)</div></div></div></div>);
+      return (
+        <div className="row g-4 mb-5">
+            <CardLoading title="Total Ventes" iconClass="bi-graph-up-arrow text-primary" cardClass="bg-primary text-white bg-opacity-75" />
+            <CardLoading title="Total Encaissé" iconClass="bi-check-circle-fill text-success" cardClass="bg-success text-white bg-opacity-75" />
+            <CardLoading title="Dettes Clients" iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
+            <CardLoading title="Crédits Dûs" iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" />
+            <div className="col-12"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body text-center text-muted">Chargement des détails par produit...</div></div></div>
+        </div>
+      );
   }
-  const byTilapia = sum.byFish?.find((f) => f.fishType === "tilapia") || { amount: 0, payment: 0, balance: 0 };
-  const byPanga = sum.byFish?.find((f) => f.fishType === "pangasius") || { amount: 0, payment: 0, balance: 0 };
-  const totalDebt = sum.totalDebt || 0; const totalCredit = sum.totalCredit || 0; 
-  const Card = ({ title, amount, iconClass, cardClass }) => (<div className="col-12 col-md-3"><div className={`card border-0 shadow-sm rounded-4 ${cardClass} h-100`}><div className="card-body d-flex align-items-center p-4"><div className="me-3 p-3 rounded-circle bg-opacity-25 bg-white d-flex align-items-center justify-content-center" style={{ width: 60, height: 60 }}><i className={`bi ${iconClass} fs-3`}></i></div><div><div className="text-uppercase small opacity-75">{title}</div><div className="h3 m-0 fw-bold">{money(amount)}</div></div></div></div></div>);
+  
+  const totalDebt = sum.totalDebt || 0; 
+  const totalCredit = sum.totalCredit || 0; 
+  
+  const Card = ({ title, amount, iconClass, cardClass }) => (<div className="col-12 col-md-3"><div className={`card border-0 shadow-sm rounded-4 ${cardClass} h-100`}>
+    <div className="card-body d-flex align-items-center p-4"><div className="me-3 p-3 rounded-circle bg-opacity-25 bg-white d-flex align-items-center justify-content-center" style={{ width: 60, height: 60 }}>
+      <i className={`bi ${iconClass} fs-3`}></i></div><div><div className="text-uppercase small opacity-75">{title}</div><div className="h3 m-0 fw-bold">{money(amount)}</div></div></div></div></div>);
+  
   return (
     <div className="row g-4 mb-5">
-      <Card title="Total Ventes" amount={sum.totalAmount} iconClass="bi-graph-up-arrow text-primary" cardClass="bg-primary text-white bg-opacity-75" />
-      <Card title="Total Encaissé" amount={sum.totalPayment} iconClass="bi-check-circle-fill text-success" cardClass="bg-success text-white bg-opacity-75" />
-      <Card title="Dettes Clients (Actuelles)" amount={totalDebt} iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
-      <Card title="Crédits Dûs (Entreprise)" amount={totalCredit} iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" />
-      <div className="col-12 col-md-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body"><div className="d-flex justify-content-between align-items-center"><h6 className="m-0 fw-bold">Détail Tilapia</h6><BadgeFish type="tilapia" /></div><hr /><div className="row small text-muted"><div className="col-4">Ventes: <br /><strong className="text-primary">{money(byTilapia.amount)}</strong></div><div className="col-4">Payé: <br /><strong className="text-success">{money(byTilapia.payment)}</strong></div><div className="col-4">{byTilapia.balance >= 0 ? "Solde Net:" : "Crédit Net:"} <br /><strong className={byTilapia.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byTilapia.balance))}</strong></div></div></div></div></div>
-      <div className="col-12 col-md-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body"><div className="d-flex justify-content-between align-items-center"><h6 className="m-0 fw-bold">Pangasius</h6><BadgeFish type="pangasius" /></div><hr /><div className="row small text-muted"><div className="col-4">Ventes: <br /><strong className="text-primary">{money(byPanga.amount)}</strong></div><div className="col-4">Payé: <br /><strong className="text-success">{money(byPanga.payment)}</strong></div><div className="col-4">{byPanga.balance >= 0 ? "Solde Net:" : "Crédit Net:"} <br /><strong className={byPanga.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byPanga.balance))}</strong></div></div></div></div></div>
+        <Card title="Total Ventes" amount={sum.totalAmount} iconClass="bi-graph-up-arrow text-primary" cardClass="bg-primary text-white bg-opacity-75" />
+        <Card title="Total Encaissé" amount={sum.totalPayment} iconClass="bi-check-circle-fill text-success" cardClass="bg-success text-white bg-opacity-75" />
+        <Card title="Dettes Clients (Actuelles)" amount={totalDebt} iconClass="bi-currency-exchange text-danger" cardClass="bg-danger text-white bg-opacity-75" />
+        <Card title="Crédits Dûs (Entreprise)" amount={totalCredit} iconClass="bi-arrow-down-circle-fill text-info" cardClass="bg-info text-white bg-opacity-75" />
+        
+        {/* Détails Dynamiques par Produit */}
+        {sum.byFish && sum.byFish.length > 0 && (
+            <>
+                <div className="col-12"><h5 className="fw-bold mb-3 mt-4">Détail des Ventes par Produit (Période)</h5></div>
+                {sum.byFish.map((f, index) => (
+                    <div className="col-12 col-md-6 col-lg-4" key={index}>
+                        <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
+                            <div className="card-body">
+                                <div className="d-flex justify-content-between align-items-center">
+                                    <h6 className="m-0 fw-bold">{f.fishType}</h6>
+                                    <BadgeFish type={f.fishType} />
+                                </div>
+                                <hr />
+                                <div className="row small text-muted">
+                                    <div className="col-4">Ventes: <br /><strong className="text-primary">{money(f.amount)}</strong></div>
+                                    <div className="col-4">Payé: <br /><strong className="text-success">{money(f.payment)}</strong></div>
+                                    <div className="col-4">Solde Net: <br /><strong className={f.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(f.balance))}</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </>
+        )}
     </div>
   );
 }
@@ -1702,9 +2284,12 @@ function CreditsBoard({ clientName, loading }) {
   );
 }
 
+// ClientReportPage (MIS À JOUR AVEC FILTRE PRODUIT)
 function ClientReportPage() {
   const clients = useClients();
+  const { products: availableProducts } = useProducts(); // NOUVEAU: Pour le filtre produit
   const [selectedClient, setSelectedClient] = useState("all");
+  const [selectedFishType, setSelectedFishType] = useState(""); // NOUVEAU: État du filtre produit
   const [loading, setLoading] = useState(false);
   
   useEffect(() => { 
@@ -1715,11 +2300,17 @@ function ClientReportPage() {
   const exportReport = async () => {
     setLoading(true);
     try {
-      const clientParam = selectedClient !== "all" ? `?clientName=${encodeURIComponent(selectedClient)}` : '';
-      const res = await apiFetch(`/api/exports/client-report.xlsx${clientParam}`, { method: "GET" });
+      const qs = new URLSearchParams();
+      if (selectedClient !== "all") qs.set("clientName", selectedClient);
+      if (selectedFishType) qs.set("fishType", selectedFishType); // AJOUT FILTRE
+      
+      const res = await apiFetch(`/api/exports/client-report.xlsx?${qs.toString()}`, { method: "GET" });
       if (!res.ok) throw new Error("Export impossible");
       const blob = await res.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement("a");
-      a.href = url; const filename = selectedClient !== "all" ? `bilan_${selectedClient.replace(/\s/g, '_')}_${new Date().toISOString().slice(0,10)}.xlsx` : `bilan_global_${new Date().toISOString().slice(0,10)}.xlsx`;
+      a.href = url; 
+      const clientPart = selectedClient !== "all" ? selectedClient.replace(/\s/g, '_') : 'global';
+      const fishPart = selectedFishType ? `_${selectedFishType.replace(/\s/g, '_')}` : '';
+      const filename = `bilan_${clientPart}${fishPart}_${new Date().toISOString().slice(0,10)}.xlsx`;
       a.download = filename; document.body.appendChild(a); a.click(); a.remove(); window.URL.revokeObjectURL(url);
     } catch (e) { alert(e.message); } finally { setLoading(false); }
   };
@@ -1728,12 +2319,18 @@ function ClientReportPage() {
     <div className="card border-0 shadow rounded-4 mb-4 bg-white">
       <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center"><i className="bi bi-file-earmark-bar-graph-fill me-2 fs-5"></i><h5 className="m-0">Bilan Financier Client / Export</h5> </div>
       <div className="card-body p-4">
-        <p className="text-muted">Sélectionnez un client pour exporter son historique complet, ou 'Tous les clients' pour un export global.</p>
+        <p className="text-muted">Sélectionnez un client et un produit (optionnel) pour exporter un historique détaillé.</p>
         <div className="d-flex flex-wrap gap-3 align-items-center mt-4">
           <label className="form-label small fw-semibold m-0">Client à Exporter :</label>
-          <select className="form-select" style={{ maxWidth: 300 }} value={selectedClient} onChange={(e) => setSelectedClient(e.target.value)} disabled={loading}>
+          <select className="form-select" style={{ maxWidth: 200 }} value={selectedClient} onChange={(e) => setSelectedClient(e.target.value)} disabled={loading}>
             <option value="all">Tous les clients</option>{clients.map(client => <option key={client} value={client}>{client}</option>)}
           </select>
+          
+          <label className="form-label small fw-semibold m-0">Produit :</label>
+          <select className="form-select" style={{ maxWidth: 200 }} value={selectedFishType} onChange={(e) => setSelectedFishType(e.target.value)} disabled={loading}>
+            <option value="">Tous les produits</option>{availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          
           <button className="btn btn-primary btn-lg rounded-pill ms-auto" onClick={exportReport} disabled={loading || (selectedClient !== 'all' && clients.length === 0)}><i className={`bi ${loading ? "bi-hourglass-split" : "bi-file-earmark-spreadsheet-fill"} me-2`}></i>{loading ? "Préparation..." : "Exporter Bilan Excel"}</button>
         </div>
       </div>
@@ -1741,15 +2338,23 @@ function ClientReportPage() {
   );
 }
 
+// SalesBalancePage (MIS À JOUR AVEC EXPORT SOLDES PAR PRODUIT)
 function SalesBalancePage() {
+  const { products: availableProducts } = useProducts(); // NOUVEAU: Pour le filtre produit
   const [sum, setSum] = useState(null); 
   const [loading, setLoading] = useState(true);
+  const [selectedFishType, setSelectedFishType] = useState(""); // NOUVEAU: État du filtre produit
 
   useEffect(() => {
     const loadSummary = async () => {
       setLoading(true);
       try { 
-        const res = await apiFetch("/api/summary?isGlobal=true"); 
+        // MODIFIÉ: Ajout du filtre produit à la requête de résumé
+        const qs = new URLSearchParams();
+        qs.set("isGlobal", "true");
+        if (selectedFishType) qs.set("fishType", selectedFishType);
+        
+        const res = await apiFetch(`/api/summary?${qs.toString()}`); 
         const data = await res.json(); 
         setSum(data); 
       } 
@@ -1764,13 +2369,16 @@ function SalesBalancePage() {
     const handler = () => loadSummary(); 
     window.addEventListener("reload-sales", handler); 
     return () => window.removeEventListener("reload-sales", handler);
-  }, []);
+  }, [selectedFishType]); // Dépendance ajoutée
 
-  // NOUVEAU: Fonction pour l'export des soldes clients
+  // NOUVEAU: Fonction pour l'export des soldes clients avec filtre produit
   const exportClientBalances = async () => {
     try {
       setLoading(true); // Optionnel, pour indiquer un chargement
-      const res = await apiFetch("/api/exports/client-balances.xlsx", { method: "GET" });
+      const qs = new URLSearchParams();
+      if (selectedFishType) qs.set("fishType", selectedFishType); // AJOUT FILTRE
+      
+      const res = await apiFetch(`/api/exports/client-balances.xlsx?${qs.toString()}`, { method: "GET" });
       
       if (!res.ok) {
         const errorText = await res.text();
@@ -1781,8 +2389,8 @@ function SalesBalancePage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      // Utilisez un nom de fichier plus spécifique
-      a.download = `bilan_solde_clients_${new Date().toISOString().slice(0,10)}.xlsx`;
+      const fishPart = selectedFishType ? `_${selectedFishType.replace(/\s/g, '_')}` : '';
+      a.download = `bilan_solde_clients${fishPart}_${new Date().toISOString().slice(0,10)}.xlsx`;
       document.body.appendChild(a); 
       a.click(); 
       a.remove();
@@ -1802,38 +2410,65 @@ function SalesBalancePage() {
   const totalDebt = sum?.totalDebt || 0; 
   const totalCredit = sum?.totalCredit || 0;
 
-  const byTilapia = sum?.byFish?.find((f) => f.fishType === "tilapia") || { amount: 0, payment: 0, balance: 0 };
-  const byPanga = sum?.byFish?.find((f) => f.fishType === "pangasius") || { amount: 0, payment: 0, balance: 0 };
   
   return (
     <div className="card border-0 shadow rounded-4 mb-4 bg-white">
       <div className="card-header bg-dark text-white rounded-top-4 p-3 d-flex align-items-center">
         <i className="bi bi-file-earmark-spreadsheet-fill me-2 fs-5"></i>
         <h5 className="m-0">Bilan Financier Global de l'Entreprise</h5>
-        
-        {/* NOUVEAU BOUTON D'EXPORT */}
-        <button 
-            className="btn btn-primary rounded-pill ms-auto" 
-            onClick={exportClientBalances} 
-            disabled={loading}
-        >
-            <i className="bi bi-file-earmark-excel-fill me-2"></i>
-            {loading ? "Exportation..." : "Exporter Soldes Clients"}
-        </button>
       </div>
       <div className="card-body p-4">
-        {/* Reste du contenu de la page Bilan Global (inchangé) */}
-        <p className="text-muted small">Ce bilan présente les totaux globaux (toutes périodes et tous clients confondus).</p>
+        
+        <div className="d-flex flex-wrap gap-3 align-items-center mb-4 p-3 bg-light rounded-3 border">
+            <h6 className="fw-bold m-0"><i className="bi bi-funnel-fill me-2 text-info"></i>Filtres :</h6>
+            <label className="form-label small fw-semibold m-0">Filtrer par Produit :</label>
+            <select className="form-select" style={{ maxWidth: 200 }} value={selectedFishType} onChange={(e) => setSelectedFishType(e.target.value)} disabled={loading}>
+                <option value="">Tous les produits</option>
+                {availableProducts.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            
+            <button 
+                className="btn btn-primary rounded-pill ms-auto" 
+                onClick={exportClientBalances} 
+                disabled={loading}
+            >
+                <i className="bi bi-file-earmark-excel-fill me-2"></i>
+                {loading ? "Exportation..." : "Exporter Soldes Clients"}
+            </button>
+        </div>
+        
+        <p className="text-muted small">Ce bilan présente les totaux globaux pour le filtre sélectionné (toutes périodes et tous clients confondus).</p>
         <div className="row g-4 mb-5">
             <div className="col-md-6 col-lg-3"><div className="card bg-primary text-white bg-opacity-75 shadow h-100"><div className="card-body"><div className="small text-uppercase">Total Ventes</div><h4 className="fw-bold m-0">{money(sum?.totalAmount || 0)}</h4></div></div></div>
             <div className="col-md-6 col-lg-3"><div className="card bg-success text-white bg-opacity-75 shadow h-100"><div className="card-body"><div className="small text-uppercase">Total Encaissé</div><h4 className="fw-bold m-0">{money(sum?.totalPayment || 0)}</h4></div></div></div>
             <div className="col-md-6 col-lg-3"><div className="card bg-danger text-white bg-opacity-75 shadow h-100"><div className="card-body"><div className="small text-uppercase">Dettes Totales Clients</div><h4 className="fw-bold m-0">{money(totalDebt)}</h4></div></div></div>
             <div className="col-md-6 col-lg-3"><div className="card bg-info text-white bg-opacity-75 shadow h-100"><div className="card-body"><div className="small text-uppercase">Crédits Totaux Dûs</div><h4 className="fw-bold m-0">{money(totalCredit)}</h4></div></div></div>
         </div>
-        <h5 className="fw-bold mb-3">Détail des Ventes par Type</h5>
+        
+        <h5 className="fw-bold mb-3">Détail des Ventes par Produit</h5>
         <div className="row g-4">
-            <div className="col-lg-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body"><div className="d-flex justify-content-between align-items-center"><h6 className="m-0 fw-bold">Tilapia</h6><BadgeFish type="tilapia" /></div><hr /><div className="row small text-muted"><div className="col-4">Ventes: <br /><strong className="text-primary">{money(byTilapia.amount)}</strong></div><div className="col-4">Payé: <br /><strong className="text-success">{money(byTilapia.payment)}</strong></div><div className="col-4">Solde Net: <br /><strong className={byTilapia.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byTilapia.balance))}</strong></div></div></div></div></div>
-            <div className="col-lg-6"><div className="card border-0 shadow-sm rounded-4 h-100 bg-white"><div className="card-body"><div className="d-flex justify-content-between align-items-center"><h6 className="m-0 fw-bold">Pangasius</h6><BadgeFish type="pangasius" /></div><hr /><div className="row small text-muted"><div className="col-4">Ventes: <br /><strong className="text-primary">{money(byPanga.amount)}</strong></div><div className="col-4">Payé: <br /><strong className="text-success">{money(byPanga.payment)}</strong></div><div className="col-4">Solde Net: <br /><strong className={byPanga.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(byPanga.balance))}</strong></div></div></div></div></div>
+            {sum?.byFish && sum.byFish.length > 0 ? (
+                sum.byFish.map((f, index) => (
+                    <div className="col-12 col-md-6 col-lg-4" key={index}>
+                        <div className="card border-0 shadow-sm rounded-4 h-100 bg-white">
+                            <div className="card-body">
+                                <div className="d-flex justify-content-between align-items-center">
+                                    <h6 className="m-0 fw-bold">{f.fishType}</h6>
+                                    <BadgeFish type={f.fishType} />
+                                </div>
+                                <hr />
+                                <div className="row small text-muted">
+                                    <div className="col-4">Ventes: <br /><strong className="text-primary">{money(f.amount)}</strong></div>
+                                    <div className="col-4">Payé: <br /><strong className="text-success">{money(f.payment)}</strong></div>
+                                    <div className="col-4">Solde Net: <br /><strong className={f.balance >= 0 ? "text-danger" : "text-success"}>{money(Math.abs(f.balance))}</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ))
+            ) : (
+                <div className="col-12"><div className="alert alert-warning text-center">Aucune donnée de vente trouvée pour cette sélection.</div></div>
+            )}
         </div>
       </div>
     </div>
@@ -1846,8 +2481,10 @@ function ChartsPage() {
         const loadData = async () => {
             setLoading(true);
             try {
+                // MODIFIÉ: La route /api/summary?isGlobal=true gère maintenant tous les produits
                 const resSummary = await apiFetch("/api/summary?isGlobal=true"); const resultSummary = await resSummary.json();
                 if (!resSummary.ok) throw new Error(resultSummary.error || "Erreur résumé."); setSum(resultSummary);
+                // MODIFIÉ: La route /api/sales renvoie toutes les ventes (pour les graphiques)
                 const resSales = await apiFetch(`/api/sales`); const resultSales = await resSales.json();
                 if (!resSales.ok) throw new Error(resultSales.error || "Erreur ventes."); setSalesData(resultSales);
             } catch (e) { console.error("Erreur chargement graphiques:", e); setSum(null); setSalesData([]); }
@@ -1904,7 +2541,7 @@ function ClientAnalysisPage() {
                             <div className="col-lg-3 col-md-6"><div className="card bg-warning text-dark bg-opacity-75 shadow h-100"><div className="card-body"><div className="small text-uppercase">Encours Total (Actuel)</div><h6 className="m-0">Dettes: <strong className="text-danger">{money(totalDebt)}</strong></h6><h6 className="m-0">Crédits: <strong className="text-success">{money(totalCredit)}</strong></h6></div></div></div>
                         </div>
                         <h5 className="fw-bold mt-5 mb-3">10 Dernières Opérations dans la Période</h5>
-                        <div className="table-responsive"><table className="table table-striped align-middle"><thead className="table-dark"><tr><th>Date</th><th>Poisson</th><th>Qté (Kg)</th><th>Montant</th><th>Payé</th><th>Solde</th></tr></thead>
+                        <div className="table-responsive"><table className="table table-striped align-middle"><thead className="table-dark"><tr><th>Date</th><th>Produit</th><th>Qté (Kg)</th><th>Montant</th><th>Payé</th><th>Solde</th></tr></thead>
                             <tbody>
                                 {recentSales.map(s => (<tr key={s._id} className={s.balance > 0 ? 'table-danger-subtle' : (s.balance < 0 ? 'table-success-subtle' : '')}><td>{formatDate(s.date)}</td><td><BadgeFish type={s.fishType} /></td><td>{s.quantity}</td><td>{money(s.amount)}</td><td>{money(s.payment)}</td><td className={s.balance > 0 ? 'text-danger fw-bold' : (s.balance < 0 ? 'text-success fw-bold' : '')}>{money(Math.abs(s.balance))}{s.balance < 0 && <span className="small text-success"> (Crédit)</span>}</td></tr>))}
                                 {recentSales.length === 0 && (<tr><td colSpan="6" className="text-center text-muted">Aucune vente trouvée.</td></tr>)}
@@ -1928,8 +2565,10 @@ function DashboardPage() {
     const loadData = async (client, start, end) => {
         setLoading(true); setError(''); setSummaryData(null); setSalesData([]);
         const qs = new URLSearchParams(); if (client) qs.set('clientName', client); if (start) qs.set('startDate', start); if (end) qs.set('endDate', end);
+        // MODIFIÉ: isGlobal=false par défaut pour les filtres de période/client
+        const resSummary = await apiFetch(`/api/summary?${qs.toString()}`); 
         try {
-            const resSummary = await apiFetch(`/api/summary?${qs.toString()}`); const resultSummary = await resSummary.json();
+            const resultSummary = await resSummary.json();
             if (!resSummary.ok) throw new Error(resultSummary.error || "Erreur résumé."); setSummaryData(resultSummary);
             const qsSales = new URLSearchParams(); if (client) qsSales.set('client', client); if (start) qsSales.set('startDate', start); if (end) qsSales.set('endDate', end);
             const resSales = await apiFetch(`/api/sales?${qsSales.toString()}`); const resultSales = await resSales.json();
@@ -1953,7 +2592,7 @@ function DashboardPage() {
                     </div>
                 </div>
             </div>
-            {!hasFilter && <div className="alert alert-warning text-center"><i className="bi bi-info-circle me-2"></i> Veuillez sélectionner un client ou une période.</div>}
+            {!hasFilter && <div className="alert alert-info text-center"><i className="bi bi-info-circle me-2"></i> Veuillez sélectionner un client ou une période pour afficher les données.</div>}
             {error && <div className="alert alert-danger text-center">{error}</div>}
             <SummaryCards sum={hasFilter ? summaryData : null} loading={showLoading} />
             <DueNotificationsPanel sales={salesData} loading={showLoading} />
@@ -2016,7 +2655,7 @@ function ActionHistoryPage() {
             <div className="card-header bg-danger text-white rounded-top-4 p-3 d-flex align-items-center"><i className="bi bi-trash-fill me-2 fs-5"></i><h5 className="m-0">Historique des Ventes Modifiées & Supprimées</h5></div>
             <div className="card-body p-4">
                 <p className="text-muted">Snapshot des ventes au moment de leur modification ou suppression.</p>
-                <div className="table-responsive"><table className="table table-sm table-bordered align-middle"><thead className="table-dark"><tr><th>Action</th><th>Date Action</th><th>Utilisateur</th><th>Motif</th><th>Date Vente</th><th>Client</th><th>Poisson</th><th>Montant</th><th>Solde</th></tr></thead>
+                <div className="table-responsive"><table className="table table-sm table-bordered align-middle"><thead className="table-dark"><tr><th>Action</th><th>Date Action</th><th>Utilisateur</th><th>Motif</th><th>Date Vente</th><th>Client</th><th>Produit</th><th>Montant</th><th>Solde</th></tr></thead>
                     <tbody>
                         {loading && <tr><td colSpan="9" className="text-center py-5 text-muted"><i className="bi bi-arrow-clockwise spin me-2"></i>Chargement...</td></tr>}
                         {!loading && logs.length === 0 && <tr><td colSpan="9" className="text-center py-5 text-muted">Aucune action enregistrée.</td></tr>}
@@ -2056,7 +2695,8 @@ function App() {
     switch (page) {
       case "dashboard": return "Tableau de Bord 📊";
       case "client-analysis": return "Analyse Client / Période 🔍";
-      case "client-management": return "Gestion des Clients 👥"; // AJOUTÉ
+      case "client-management": return "Gestion des Clients 👥"; 
+      case "product-management": return "Gestion de Mes Produits 🐟"; // NOUVEAU
       case "new-sale": return "Nouvelle Vente 📝";
       case "sales": return "Historique des Ventes 📋";
       case "debts": return "Vue Dettes Clients 💰";
@@ -2075,7 +2715,8 @@ function App() {
     switch (currentPage) {
       case "sales-balance": return <SalesBalancePage />;
       case "client-analysis": return <ClientAnalysisPage />; 
-      case "client-management": return <ClientManagementPage />; // AJOUTÉ
+      case "client-management": return <ClientManagementPage />; 
+      case "product-management": return <ProductManagementPage />; // NOUVEAU
       case "new-sale": return <SaleForm onSaved={() => setCurrentPage("sales")} />;
       case "sales": return <ReloadableSalesTable />; 
       case "debts": return (<><div className="row g-4 mb-4"><div className="col-lg-6"><DebtsBoard clientName={""} loading={false} /></div><div className="col-lg-6"><CreditsBoard clientName={""} loading={false} /></div></div><ReloadableSalesTable /></>);
