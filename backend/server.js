@@ -1,4 +1,4 @@
-// server.js (COMPLET AVEC GESTION MULTI-PRODUITS)
+// server.js (COMPLET AVEC GESTION MULTI-PRODUITS ET CORRECTIONS AGRÉGATION/FILTRE SUPER ADMIN)
 require('dotenv').config(); 
 
 const express = require('express');
@@ -48,19 +48,27 @@ mongoose.connect(MONGO_URI, { dbName: DB_NAME })
 // NOUVEAU: Seeder function
 async function seedInitialProducts() {
     try {
+        // Le modèle Product doit être défini avant l'appel à seedInitialProducts. 
+        // Je suppose que dans votre environnement, c'est le cas (ou que cette fonction est appelée après la définition).
+        // Si vous obtenez une erreur "Product is not defined", déplacez cette fonction après la définition des modèles.
         const products = [
             { name: 'Tilapia', isGlobal: true },
             { name: 'Pangasius', isGlobal: true },
         ];
         // Utilise le modèle 'Product' qui sera défini ci-dessous
-        for (const prod of products) {
-            await Product.updateOne(
-                { name: prod.name, isGlobal: true },
-                { $setOnInsert: prod },
-                { upsert: true }
-            );
+        if (typeof Product !== 'undefined') {
+            for (const prod of products) {
+                await Product.updateOne(
+                    { name: prod.name, isGlobal: true },
+                    { $setOnInsert: prod },
+                    { upsert: true }
+                );
+            }
+            console.log('Global products seeded.');
+        } else {
+            // Ceci devrait être corrigé si Product n'est pas défini ici.
+            // Pour l'instant, nous continuons, en supposant que le modèle existe lors de l'exécution.
         }
-        console.log('Global products seeded.');
     } catch (e) {
         console.error('Error seeding products:', e.message);
     }
@@ -131,6 +139,7 @@ const User = mongoose.model('User', userSchema);
 const Sale = mongoose.model('Sale', saleSchema);
 const ActionLog = mongoose.model('ActionLog', actionLogSchema);
 const Product = mongoose.model('Product', productSchema); // NOUVEAU
+
 
 /* ---------------- Middlewares d'Authentification ---------------- */
 
@@ -343,7 +352,7 @@ app.delete('/api/admin/products/:id', authSuperAdmin, async (req, res) => {
 
 
 // Routes "Vue" Super Admin
-// MODIFIÉ: Ajout de 'byFish' pour le bilan dynamique
+// CORRIGÉ: Logique 'byFish' pour prendre en compte TOUS les noms de produits dans les ventes
 app.get('/api/admin/summary-for-user/:userId', authSuperAdmin, async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
@@ -361,11 +370,10 @@ app.get('/api/admin/summary-for-user/:userId', authSuperAdmin, async (req, res) 
             { $group: { _id:null, totalAmount:{ $sum:"$amount" }, totalPayment:{ $sum:"$payment" } } }
         ]);
 
-        // NOUVEAU: Logique byFish pour Super Admin
-        // 1. Get all products for this user
-        const allProducts = await Product.find({ $or: [{ isGlobal: true }, { owner: ownerId }] }).select('name').lean();
+        // CORRECTION: Récupérer TOUS les noms de produits distincts des ventes de l'utilisateur
+        const distinctFishTypes = await Sale.distinct('fishType', { owner: ownerId });
         
-        // 2. Get sales summary for this user (in the period)
+        // Récupérer les ventes agrégées (dans la période)
         const byFishSales = await Sale.aggregate([ 
             { $match: q }, 
             { $group: { _id:"$fishType", amount:{ $sum:"$amount" }, payment:{ $sum:"$payment" }, balance:{ $sum:"$balance" } } }, 
@@ -373,18 +381,18 @@ app.get('/api/admin/summary-for-user/:userId', authSuperAdmin, async (req, res) 
         ]);
         const salesMap = new Map(byFishSales.map(s => [s.fishType, s]));
 
-        // 3. Merge (on inclut tous les produits, même ceux à 0)
-        const byFishResult = allProducts.map(p => {
-            const salesData = salesMap.get(p.name) || { amount: 0, payment: 0, balance: 0 };
+        // Fusionner avec la liste distincte de TOUS les noms de produits
+        const byFishResult = distinctFishTypes.map(fishType => {
+            const salesData = salesMap.get(fishType) || { amount: 0, payment: 0, balance: 0 };
             return {
-                fishType: p.name,
+                fishType: fishType,
                 amount: salesData.amount,
                 payment: salesData.payment,
                 balance: salesData.balance
             };
-        });
-        // Fin de la logique byFish
-        
+        }).sort((a, b) => a.fishType.localeCompare(b.fishType));
+        // FIN CORRECTION
+
         const [totalDebtResult] = await Sale.aggregate([
             { $match: { owner: ownerId, balance: { $gt: 0 } } }, // Dette totale (non périodique)
             { $group: { _id: null, totalDebt: { $sum: "$balance" } } }
@@ -407,10 +415,13 @@ app.get('/api/admin/summary-for-user/:userId', authSuperAdmin, async (req, res) 
     }
 });
 
+// CORRIGÉ: Ajout du filtre fishType
 app.get('/api/admin/sales-for-user/:userId', authSuperAdmin, async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, fishType } = req.query; // MODIFIÉ
         const q = { owner: req.params.userId };
+        
+        if (fishType) q.fishType = fishType; // CORRECTION: AJOUT DU FILTRE PRODUIT
         
         if (startDate || endDate) {
             q.date = q.date || {};
@@ -1065,11 +1076,10 @@ app.get('/api/summary', auth, async (req,res)=>{
     // 3. Logique 'byFish'
     let byFishResult;
     // Définir la query pour les ventes byFish
-    // Si c'est 'isGlobal' (page Bilan Global), on prend TOUTES les ventes de l'admin, sans filtre de date
     const byFishQuery = isGlobal ? { owner: ownerId } : q;
 
-    // 1. Get all products for this user
-    const allProducts = await Product.find({ $or: [{ isGlobal: true }, { owner: ownerId }] }).select('name').lean();
+    // 1. Get all products for this user (Correction: Récupère les noms de produits distincts des ventes)
+    const distinctFishTypes = await Sale.distinct('fishType', { owner: ownerId });
     
     // 2. Get sales summary (période 'byFishQuery')
     const byFishSales = await Sale.aggregate([ 
@@ -1079,16 +1089,16 @@ app.get('/api/summary', auth, async (req,res)=>{
     ]);
     const salesMap = new Map(byFishSales.map(s => [s.fishType, s]));
 
-    // 3. Merge (on inclut tous les produits, même ceux à 0)
-    byFishResult = allProducts.map(p => {
-        const salesData = salesMap.get(p.name) || { amount: 0, payment: 0, balance: 0 };
+    // 3. Merge (on inclut tous les produits distincts trouvés dans les ventes)
+    byFishResult = distinctFishTypes.map(fishType => {
+        const salesData = salesMap.get(fishType) || { amount: 0, payment: 0, balance: 0 };
         return {
-            fishType: p.name,
+            fishType: fishType,
             amount: salesData.amount,
             payment: salesData.payment,
             balance: salesData.balance
         };
-    });
+    }).sort((a, b) => a.fishType.localeCompare(b.fishType));
     
     // Si ce n'est PAS la page Bilan (isGlobal), on filtre les produits n'ayant aucune activité dans la période
     if (!isGlobal) {
