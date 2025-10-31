@@ -1,4 +1,4 @@
-// server.js (COMPLET AVEC GESTION MULTI-PRODUITS ET CORRECTIONS AGRÉGATION/FILTRE SUPER ADMIN)
+// server.js (COMPLET AVEC GESTION MULTI-PRODUITS ET AJOUT CHAMPS OPTIONNELS)
 require('dotenv').config(); 
 
 const express = require('express');
@@ -97,6 +97,12 @@ const saleSchema = new mongoose.Schema({
   balance:     { type: Number, required: true },
   observation: { type: String, default: '' },
   settled:     { type: Boolean, default: false },
+  
+  // NOUVEAUX CHAMPS OPTIONNELS
+  dateCommande: { type: Date, required: false },
+  dateLivraison: { type: Date, required: false },
+  livreurNumero: { type: String, required: false, trim: true, default: '' },
+  
 }, { timestamps: true });
 
 saleSchema.pre('validate', function(next){
@@ -470,7 +476,7 @@ app.get('/api/admin/logs-for-user/:userId', authSuperAdmin, async (req, res) => 
   }
 });
 
-// MODIFIÉ: Export Super Admin (Ventes et Logs) - Ajout filtre fishType
+// MODIFIÉ: Export Super Admin (Ventes et Logs) - Ajout filtre fishType et nouveaux champs
 app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
     try {
         const { startDate, endDate, fishType } = req.query; // MODIFIÉ
@@ -510,13 +516,24 @@ app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
             { header: 'Montant', key: 'amount', width: 15 },
             { header: 'Payé', key: 'payment', width: 18 },
             { header: 'Balance', key: 'balance', width: 15 },
+            // NOUVEAUX CHAMPS
+            { header: 'Date Commande', key: 'dateCommande', width: 15 },
+            { header: 'Date Livraison', key: 'dateLivraison', width: 15 },
+            { header: 'N° Livreur', key: 'livreurNumero', width: 15 },
+            // FIN NOUVEAUX CHAMPS
             { header: 'Statut', key: 'settled', width: 10 },
         ];
         sales.forEach(s => wsVentes.addRow({
             date: new Date(s.date).toISOString().slice(0, 10),
             clientName: s.clientName, fishType: s.fishType, quantity: s.quantity,
             unitPrice: s.unitPrice, amount: s.amount, payment: s.payment,
-            balance: s.balance, settled: s.settled ? 'Oui' : 'Non',
+            balance: s.balance, 
+            // NOUVELLES DONNÉES
+            dateCommande: s.dateCommande ? new Date(s.dateCommande).toISOString().slice(0, 10) : '',
+            dateLivraison: s.dateLivraison ? new Date(s.dateLivraison).toISOString().slice(0, 10) : '',
+            livreurNumero: s.livreurNumero || '',
+            // FIN NOUVELLES DONNÉES
+            settled: s.settled ? 'Oui' : 'Non',
         }));
 
         const wsLogs = wb.addWorksheet('Historique Actions');
@@ -802,10 +819,14 @@ app.get('/api/action-logs', auth, async (req, res) => {
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// MODIFIÉ: Ajout des nouveaux champs
 app.post('/api/sales', auth, async (req,res)=>{
   const session = await mongoose.startSession(); session.startTransaction();
   try{
-    const { date, clientName, fishType, quantity, delivered=0, unitPrice, payment=0, observation='' } = req.body;
+    const { 
+        date, clientName, fishType, quantity, delivered=0, unitPrice, payment=0, observation='',
+        dateCommande, dateLivraison, livreurNumero // Nouveaux champs
+    } = req.body;
     
     // Vérifier si le produit est valide pour cet utilisateur
     const validProduct = await Product.findOne({
@@ -819,7 +840,11 @@ app.post('/api/sales', auth, async (req,res)=>{
     const [newSale] = await Sale.create([{ 
       owner: req.user.uid, date: date ? new Date(date) : new Date(),
       clientName, fishType, quantity:Number(quantity), delivered:Number(delivered),
-      unitPrice:Number(unitPrice), payment:Number(payment), observation
+      unitPrice:Number(unitPrice), payment:Number(payment), observation,
+      // Nouveaux champs
+      dateCommande: dateCommande || null,
+      dateLivraison: dateLivraison || null,
+      livreurNumero: livreurNumero || ''
     }], { session }); 
     
     await session.commitTransaction();
@@ -828,6 +853,7 @@ app.post('/api/sales', auth, async (req,res)=>{
   finally { session.endSession(); }
 });
 
+// MODIFIÉ: Ajout des nouveaux champs
 app.put('/api/sales/:id', auth, async (req, res) => {
     const session = await mongoose.startSession(); session.startTransaction();
     try {
@@ -859,6 +885,11 @@ app.put('/api/sales/:id', auth, async (req, res) => {
         sale.unitPrice = Number(saleData.unitPrice);
         sale.payment = Number(saleData.payment);
         sale.observation = saleData.observation;
+        
+        // Nouveaux champs
+        sale.dateCommande = saleData.dateCommande || null;
+        sale.dateLivraison = saleData.dateLivraison || null;
+        sale.livreurNumero = saleData.livreurNumero || '';
 
         await sale.validate();
         const updatedSale = await sale.save({ session });
@@ -953,7 +984,7 @@ app.patch('/api/sales/:id/settle', auth, async (req,res)=>{
     await session.commitTransaction();
     const updatedSale = await Sale.findById(sale._id); 
     res.json(updatedSale);
-  }catch(e){ await session.abortTransaction(); res.status(500).json({ error:e.message }); }
+  }catch(e){ res.status(500).json({ error:e.message }); }
   finally { session.endSession(); }
 });
 
@@ -1146,7 +1177,7 @@ app.get('/api/clients', auth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// MODIFIÉ: Export Bilan Client - Ajout filtre fishType
+// MODIFIÉ: Export Bilan Client - Ajout filtre fishType et nouveaux champs
 app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
   try {
     const { clientName, fishType } = req.query; // MODIFIÉ
@@ -1163,14 +1194,26 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
       { header: 'Prix Unitaire', key: 'unitPrice', width: 14 }, { header: 'Montant Total', key: 'amount', width: 15 },
       { header: 'Règlement Cumulé', key: 'payment', width: 18 }, { header: 'Balance', key: 'balance', width: 15 },
       { header: 'Type de Solde', key: 'balanceType', width: 15 }, { header: 'Livré (Kg)', key: 'delivered', width: 12 },
-      { header: 'Statut', key: 'settled', width: 10 }, { header: 'Observation', key: 'observation', width: 30 },
+      { header: 'Statut', key: 'settled', width: 10 }, 
+      // NOUVEAUX CHAMPS
+      { header: 'Date Commande', key: 'dateCommande', width: 15 },
+      { header: 'Date Livraison', key: 'dateLivraison', width: 15 },
+      { header: 'N° Livreur', key: 'livreurNumero', width: 15 },
+      // FIN NOUVEAUX CHAMPS
+      { header: 'Observation', key: 'observation', width: 30 },
     ];
     sales.forEach(s => ws.addRow({
         clientName: s.clientName, date: new Date(s.date).toISOString().slice(0, 10),
         fishType: s.fishType, quantity: s.quantity, unitPrice: s.unitPrice, amount: s.amount,
         payment: s.payment, balance: s.balance,
         balanceType: s.balance > 0 ? 'Dette Client' : (s.balance < 0 ? 'Crédit Entreprise' : 'Soldé'),
-        delivered: s.delivered, settled: s.settled?'Oui':'Non', observation: s.observation||''
+        delivered: s.delivered, settled: s.settled?'Oui':'Non', 
+        // NOUVELLES DONNÉES
+        dateCommande: s.dateCommande ? new Date(s.dateCommande).toISOString().slice(0, 10) : '',
+        dateLivraison: s.dateLivraison ? new Date(s.dateLivraison).toISOString().slice(0, 10) : '',
+        livreurNumero: s.livreurNumero || '',
+        // FIN NOUVELLES DONNÉES
+        observation: s.observation||''
     }));
     res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition',`attachment; filename="${clientName && clientName !== 'all' ? `bilan_${clientName.replace(/\s/g, '_')}` : 'bilan_global'}.xlsx"`);
@@ -1178,7 +1221,7 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// MODIFIÉ: Export Historique Ventes - Ajout filtre fishType
+// MODIFIÉ: Export Historique Ventes - Ajout filtre fishType et nouveaux champs
 app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
   try{
     const { fishType } = req.query; // MODIFIÉ
@@ -1194,6 +1237,11 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
       { header:'Livré', key:'delivered', width:12 }, { header:'Reste à livrer', key:'remaining', width:14 },
       { header:'Prix Unitaire', key:'unitPrice', width:14 }, { header:'Montant', key:'amount', width:12 },
       { header:'Règlement', key:'payment', width:12 }, { header:'Solde', key:'balance', width:12 },
+      // NOUVEAUX CHAMPS
+      { header: 'Date Commande', key: 'dateCommande', width: 15 },
+      { header: 'Date Livraison', key: 'dateLivraison', width: 15 },
+      { header: 'N° Livreur', key: 'livreurNumero', width: 15 },
+      // FIN NOUVEAUX CHAMPS
       { header:'Soldé', key:'settled', width:10 }, { header:'Observation', key:'observation', width:30 },
     ];
     sales.forEach(s=>{
@@ -1201,7 +1249,13 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
       ws.addRow({
         date:new Date(s.date).toISOString().slice(0,10), clientName:s.clientName, fishType:s.fishType,
         quantity:s.quantity, delivered:s.delivered, remaining, unitPrice:s.unitPrice,
-        amount:s.amount, payment:s.payment, balance:s.balance, settled:s.settled?'Oui':'Non',
+        amount:s.amount, payment:s.payment, balance:s.balance, 
+        // NOUVELLES DONNÉES
+        dateCommande: s.dateCommande ? new Date(s.dateCommande).toISOString().slice(0, 10) : '',
+        dateLivraison: s.dateLivraison ? new Date(s.dateLivraison).toISOString().slice(0, 10) : '',
+        livreurNumero: s.livreurNumero || '',
+        // FIN NOUVELLES DONNÉES
+        settled:s.settled?'Oui':'Non',
         observation:s.observation||''
       });
     });
