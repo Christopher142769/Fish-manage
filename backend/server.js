@@ -1,4 +1,4 @@
-// server.js (COMPLET AVEC GESTION MULTI-PRODUITS ET AJOUT CHAMPS OPTIONNELS)
+// server.js (COMPLET AVEC GESTION MULTI-PRODUITS ET AJOUT 'lieuDeLivraison')
 require('dotenv').config(); 
 
 const express = require('express');
@@ -102,6 +102,9 @@ const saleSchema = new mongoose.Schema({
   dateCommande: { type: Date, required: false },
   dateLivraison: { type: Date, required: false },
   livreurNumero: { type: String, required: false, trim: true, default: '' },
+  
+  // NOUVEAU CHAMP AJOUTÉ
+  lieuDeLivraison: { type: String, required: false, trim: true, default: '' },
   
 }, { timestamps: true });
 
@@ -520,6 +523,7 @@ app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
             { header: 'Date Commande', key: 'dateCommande', width: 15 },
             { header: 'Date Livraison', key: 'dateLivraison', width: 15 },
             { header: 'N° Livreur', key: 'livreurNumero', width: 15 },
+            { header: 'Lieu Livraison', key: 'lieuDeLivraison', width: 25 }, // NOUVEAU CHAMP
             // FIN NOUVEAUX CHAMPS
             { header: 'Statut', key: 'settled', width: 10 },
         ];
@@ -532,6 +536,7 @@ app.get('/api/admin/export/:userId', authSuperAdmin, async (req, res) => {
             dateCommande: s.dateCommande ? new Date(s.dateCommande).toISOString().slice(0, 10) : '',
             dateLivraison: s.dateLivraison ? new Date(s.dateLivraison).toISOString().slice(0, 10) : '',
             livreurNumero: s.livreurNumero || '',
+            lieuDeLivraison: s.lieuDeLivraison || '', // NOUVEAU CHAMP
             // FIN NOUVELLES DONNÉES
             settled: s.settled ? 'Oui' : 'Non',
         }));
@@ -825,7 +830,8 @@ app.post('/api/sales', auth, async (req,res)=>{
   try{
     const { 
         date, clientName, fishType, quantity, delivered=0, unitPrice, payment=0, observation='',
-        dateCommande, dateLivraison, livreurNumero // Nouveaux champs
+        dateCommande, dateLivraison, livreurNumero, 
+        lieuDeLivraison // NOUVEAU CHAMP
     } = req.body;
     
     // Vérifier si le produit est valide pour cet utilisateur
@@ -844,7 +850,8 @@ app.post('/api/sales', auth, async (req,res)=>{
       // Nouveaux champs
       dateCommande: dateCommande || null,
       dateLivraison: dateLivraison || null,
-      livreurNumero: livreurNumero || ''
+      livreurNumero: livreurNumero || '',
+      lieuDeLivraison: lieuDeLivraison || '' // NOUVEAU CHAMP
     }], { session }); 
     
     await session.commitTransaction();
@@ -890,6 +897,7 @@ app.put('/api/sales/:id', auth, async (req, res) => {
         sale.dateCommande = saleData.dateCommande || null;
         sale.dateLivraison = saleData.dateLivraison || null;
         sale.livreurNumero = saleData.livreurNumero || '';
+        sale.lieuDeLivraison = saleData.lieuDeLivraison || ''; // NOUVEAU CHAMP
 
         await sale.validate();
         const updatedSale = await sale.save({ session });
@@ -1199,6 +1207,7 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
       { header: 'Date Commande', key: 'dateCommande', width: 15 },
       { header: 'Date Livraison', key: 'dateLivraison', width: 15 },
       { header: 'N° Livreur', key: 'livreurNumero', width: 15 },
+      { header: 'Lieu Livraison', key: 'lieuDeLivraison', width: 25 }, // NOUVEAU CHAMP
       // FIN NOUVEAUX CHAMPS
       { header: 'Observation', key: 'observation', width: 30 },
     ];
@@ -1212,6 +1221,7 @@ app.get('/api/exports/client-report.xlsx', auth, async (req, res) => {
         dateCommande: s.dateCommande ? new Date(s.dateCommande).toISOString().slice(0, 10) : '',
         dateLivraison: s.dateLivraison ? new Date(s.dateLivraison).toISOString().slice(0, 10) : '',
         livreurNumero: s.livreurNumero || '',
+        lieuDeLivraison: s.lieuDeLivraison || '', // NOUVEAU CHAMP
         // FIN NOUVELLES DONNÉES
         observation: s.observation||''
     }));
@@ -1241,6 +1251,7 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
       { header: 'Date Commande', key: 'dateCommande', width: 15 },
       { header: 'Date Livraison', key: 'dateLivraison', width: 15 },
       { header: 'N° Livreur', key: 'livreurNumero', width: 15 },
+      { header: 'Lieu Livraison', key: 'lieuDeLivraison', width: 25 }, // NOUVEAU CHAMP
       // FIN NOUVEAUX CHAMPS
       { header:'Soldé', key:'settled', width:10 }, { header:'Observation', key:'observation', width:30 },
     ];
@@ -1254,6 +1265,7 @@ app.get('/api/exports/sales.xlsx', auth, async (req,res)=>{
         dateCommande: s.dateCommande ? new Date(s.dateCommande).toISOString().slice(0, 10) : '',
         dateLivraison: s.dateLivraison ? new Date(s.dateLivraison).toISOString().slice(0, 10) : '',
         livreurNumero: s.livreurNumero || '',
+        lieuDeLivraison: s.lieuDeLivraison || '', // NOUVEAU CHAMP
         // FIN NOUVELLES DONNÉES
         settled:s.settled?'Oui':'Non',
         observation:s.observation||''
