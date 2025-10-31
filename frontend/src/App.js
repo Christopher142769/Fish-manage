@@ -1104,7 +1104,7 @@ function Sidebar({ companyName, currentPage, onNavigate, onLogout, open, setOpen
         <button type="button" className="btn btn-link text-white d-md-none align-self-end p-0 mb-2" onClick={() => setOpen(false)}><i className="bi bi-x-lg fs-5" /></button>
         <a href="#" className="d-flex align-items-center mb-3 text-white text-decoration-none">
   <img src={logo} alt="Logo" className="me-2" style={{ width: '30px', height: '30px' }} />
-  <span className="fs-5 fw-bold">PRODUCT MANAGE</span>
+  <span className="fs-5 fw-bold">SALES MANAGER</span>
 </a>        <hr className="border-secondary" />
         <ul className="nav nav-pills flex-column mb-auto">
           {navItems.map((item) => (
