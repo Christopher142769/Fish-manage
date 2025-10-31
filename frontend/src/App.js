@@ -1412,7 +1412,6 @@ function SaleForm({ onSaved }) {
                                 <input type="date" className="form-control" value={date} onChange={(e) => setDate(e.target.value)} required />
                             </div>
                             {/* <div className="col-12"><SaleFormBody data={formData} setData={setFormData} isEdit={false} /></div> */}
-                            // App.js, ligne ~1667 (MODIFIÉE)
 <div className="col-12">
     <SaleFormBody 
         data={formData} 
