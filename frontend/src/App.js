@@ -1217,8 +1217,11 @@ function AuthView({ onAuth }) {
 // ADMIN/USER: Formulaires et Modales
 // =====================================
 // SaleFormBody (MIS À JOUR AVEC LE NOUVEAU HOOK PRODUITS)
-function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
-    const { products, loading } = useProducts(); // NOUVEAU
+// function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
+//     const { products, loading } = useProducts();
+function SaleFormBody({ data, setData, disabled = false, isEdit = false, products, productsLoading }) {
+    // On utilise les props du parent, on ne recharge PAS les produits ici
+    const loading = productsLoading;
     
     // Si on est en édition, on s'assure que le produit actuel est dans la liste, sinon on l'ajoute temporairement.
     const allProducts = useMemo(() => {
@@ -1408,7 +1411,17 @@ function SaleForm({ onSaved }) {
                                 <label className="form-label small fw-semibold">Date</label>
                                 <input type="date" className="form-control" value={date} onChange={(e) => setDate(e.target.value)} required />
                             </div>
-                            <div className="col-12"><SaleFormBody data={formData} setData={setFormData} isEdit={false} /></div>
+                            {/* <div className="col-12"><SaleFormBody data={formData} setData={setFormData} isEdit={false} /></div> */}
+                            // App.js, ligne ~1667 (MODIFIÉE)
+<div className="col-12">
+    <SaleFormBody 
+        data={formData} 
+        setData={setFormData} 
+        isEdit={false} 
+        products={products} 
+        productsLoading={productsLoading}
+    />
+</div>
                             <div className="col-12 d-grid gap-2 mt-4">
                                 <button className="btn btn-primary btn-lg rounded-pill" disabled={loading}><i className={`bi ${loading ? "bi-hourglass-split" : "bi-check-circle-fill"} me-2`}></i>{loading ? "Enregistrement..." : "Enregistrer la Vente"}</button>
                             </div>
