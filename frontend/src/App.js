@@ -1,5 +1,7 @@
 // App.js (COMPLET AVEC GESTION MULTI-PRODUITS)
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import logo from './logo.png'; // MODIFIÉ: Assurez-vous que 'logo.png' est le nom correct de votre logo dans le dossier src
+// import './App.css';
 
 /** =====================================
  * CONFIG GLOBALE & HELPERS
@@ -1100,8 +1102,10 @@ function Sidebar({ companyName, currentPage, onNavigate, onLogout, open, setOpen
       {!isMdUp && <div onClick={() => setOpen(false)} className={`position-fixed top-0 start-0 w-100 h-100 bg-dark bg-opacity-50 ${open ? "d-block" : "d-none"}`} style={{ zIndex: 1029 }} />}
       <aside className={`bg-dark text-white shadow-lg d-flex flex-column p-3 position-fixed top-0 start-0`} style={{ width: SIDEBAR_WIDTH, height: "100vh", zIndex: 1030, transition: "transform .25s ease", transform: !isMdUp && !open ? `translateX(-${SIDEBAR_WIDTH}px)` : "translateX(0)", overflowY: "auto" }}>
         <button type="button" className="btn btn-link text-white d-md-none align-self-end p-0 mb-2" onClick={() => setOpen(false)}><i className="bi bi-x-lg fs-5" /></button>
-        <a href="#" className="d-flex align-items-center mb-3 text-white text-decoration-none"><i className="bi bi-water me-2 fs-4 text-info"></i><span className="fs-5 fw-bold">Fish Manage</span></a>
-        <hr className="border-secondary" />
+        <a href="#" className="d-flex align-items-center mb-3 text-white text-decoration-none">
+  <img src={logo} alt="Logo" className="me-2" style={{ width: '30px', height: '30px' }} />
+  <span className="fs-5 fw-bold">PRODUCT MANAGE</span>
+</a>        <hr className="border-secondary" />
         <ul className="nav nav-pills flex-column mb-auto">
           {navItems.map((item) => (
             <li className="nav-item" key={item.id}>
@@ -1162,9 +1166,14 @@ function AuthView({ onAuth }) {
           <div className="col-12 col-sm-10 col-md-7 col-lg-5">
             <div className="card border-0 shadow-lg rounded-4 p-2">
               <div className="card-body p-4">
-                <div className="text-center mb-4">
-                  <i className="bi bi-water text-primary display-4"></i>
-                  <h3 className="fw-bold mt-2">Fish Manage</h3>
+              <div className="text-center mb-4">
+                  {/* VOTRE LOGO EST MAINTENANT ICI */}
+                  <img 
+                    src={logo} 
+                    alt="Fish Manage Logo" 
+                    className="mb-3" 
+                    style={{ maxWidth: '100px', height: 'auto' }} 
+                  />
                   <p className="text-muted small">Connexion au Dashboard Admin</p>
                 </div>
                 <form onSubmit={submit} className="mt-3">
@@ -1236,16 +1245,37 @@ function SaleFormBody({ data, setData, disabled = false, isEdit = false }) {
                 </>
             )}
             <div className="col-6">
-                <label className="form-label small fw-semibold">Produit (Poisson)</label>
+                <label className="form-label small fw-semibold">Produit</label>
                 <select className="form-select" value={data.fishType} onChange={(e) => setData(p => ({...p, fishType: e.target.value}))} disabled={disabled || allProducts.length === 0}>
                     {allProducts.length === 0 && <option value="">-- Aucun produit disponible --</option>}
                     {allProducts.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
             </div>
             <div className="col-6">
-                <label className="form-label small fw-semibold">Qté Commandée (kg)</label>
+                <label className="form-label small fw-semibold">Qté Commandée</label>
                 <input type="number" step="0.01" className="form-control" value={data.quantity} onChange={(e) => setData(p => ({...p, quantity: e.target.value}))} required disabled={disabled} />
             </div>
+            <div className="col-12 col-md-4">
+                <label className="form-label small fw-semibold">Date Commande (Optionnel)</label>
+                <input type="date" className="form-control" value={data.dateCommande} onChange={(e) => setData(p => ({...p, dateCommande: e.target.value}))} disabled={disabled} />
+            </div>
+            
+            {/* NOUVEAU: Date de Livraison */}
+            <div className="col-12 col-md-4">
+                <label className="form-label small fw-semibold">Date Livraison (Optionnel)</label>
+                <input type="date" className="form-control" value={data.dateLivraison} onChange={(e) => setData(p => ({...p, dateLivraison: e.target.value}))} disabled={disabled} />
+            </div>
+            
+            {/* NOUVEAU: Numéro Livreur */}
+            <div className="col-12 col-md-4">
+                <label className="form-label small fw-semibold">N° Livreur (Optionnel)</label>
+                <input className="form-control" value={data.livreurNumero} onChange={(e) => setData(p => ({...p, livreurNumero: e.target.value}))} placeholder="Ex: LVR12A" disabled={disabled} />
+            </div>
+            <div className="col-12 col-md-4">
+                <label className="form-label small fw-semibold">Lieu Livraison (Optionnel)</label>
+                <input className="form-control" value={data.lieuDeLivraison} onChange={(e) => setData(p => ({...p, lieuDeLivraison: e.target.value}))} placeholder="Ex: Cotonou, Akpakpa" disabled={disabled} />
+            </div>
+            <div className="col-12"><hr className="my-2"/></div> {/* Séparateur pour les champs principaux */}
             <div className="col-6">
                 <label className="form-label small fw-semibold">Prix Unitaire (XOF)</label>
                 <input type="number" step="0.01" className="form-control" value={data.unitPrice} onChange={(e) => setData(p => ({...p, unitPrice: e.target.value}))} required disabled={disabled} />
@@ -1384,7 +1414,7 @@ function SaleForm({ onSaved }) {
                             </div>
                             <div className="col-12 d-flex justify-content-between flex-wrap pt-3 mt-3 border-top">
                                 <span className="badge bg-secondary p-2">Montant: <strong className="fs-6">{money(amount)}</strong></span>
-                                <span className="badge bg-warning text-dark p-2">Reste à livrer: <strong className="fs-6">{remainingToDeliver} kg</strong></span>
+                                <span className="badge bg-warning text-dark p-2">Reste à livrer: <strong className="fs-6">{remainingToDeliver}</strong></span>
                                 <span className={`badge ${balance > 0 ? 'bg-danger' : 'bg-success'} p-2`}>{balance > 0 ? "Solde à payer" : "Crédit Client"}: <strong className="fs-6">{money(Math.abs(balance))}</strong></span>
                             </div>
                         </>
@@ -2693,10 +2723,10 @@ function App() {
 
   const getPageTitle = (page) => {
     switch (page) {
-      case "dashboard": return "Tableau de Bord 📊";
+      case "dashboard": return "Tableau de Bord";
       case "client-analysis": return "Analyse Client / Période 🔍";
       case "client-management": return "Gestion des Clients 👥"; 
-      case "product-management": return "Gestion de Mes Produits 🐟"; // NOUVEAU
+      case "product-management": return "Gestion de Mes Produits"; // NOUVEAU
       case "new-sale": return "Nouvelle Vente 📝";
       case "sales": return "Historique des Ventes 📋";
       case "debts": return "Vue Dettes Clients 💰";
